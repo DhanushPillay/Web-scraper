@@ -9,6 +9,8 @@ class TechNewsScraper:
         # Base URL for the news page
         self.base_url = "https://news.ycombinator.com/news"
         self.articles = []
+        # Default fields to display
+        self.display_fields = ['score', 'title']
 
     def scrape_headlines(self, num_pages=3):
         """
@@ -61,20 +63,54 @@ class TechNewsScraper:
                 title = title_element.text
                 link = title_element['href']
                 
-                # 2. Get Score (from the subtext row below the title)
-                metadata_row = row.find_next_sibling('tr')
-                score_element = metadata_row.find('span', class_='score')
+                # Fix relative links (e.g., "item?id=...")
+                if not link.startswith('http'):
+                    link = f"https://news.ycombinator.com/{link}"
                 
-                if score_element:
-                    score = int(score_element.text.split()[0])
-                else:
-                    score = 0
+                # 2. Get Metadata (Score, Author, Time, Comments)
+                metadata_row = row.find_next_sibling('tr')
+                subtext = metadata_row.find('td', class_='subtext')
+                
+                score = 0
+                author = "Unknown"
+                time_posted = "Unknown"
+                comments = "0"
+
+                if subtext:
+                    # Score
+                    score_elem = subtext.find('span', class_='score')
+                    if score_elem:
+                        score = int(score_elem.text.split()[0])
+                    
+                    # Author
+                    author_elem = subtext.find('a', class_='hnuser')
+                    if author_elem:
+                        author = author_elem.text
+                        
+                    # Time
+                    age_elem = subtext.find('span', class_='age')
+                    if age_elem:
+                        time_posted = age_elem.text
+                        
+                    # Comments
+                    links = subtext.find_all('a')
+                    for l in links:
+                        if 'comment' in l.text:
+                            comments = l.text.split()[0]
+                            if comments == 'discuss': comments = "0"
+                            break
+                        if 'discuss' in l.text:
+                            comments = "0"
+                            break
                 
                 # Append to the main list
                 self.articles.append({
                     'title': title,
                     'link': link,
-                    'score': score
+                    'score': score,
+                    'author': author,
+                    'time': time_posted,
+                    'comments': comments
                 })
                 found_on_page += 1
                 
@@ -100,7 +136,7 @@ class TechNewsScraper:
 
         try:
             with open(filename, mode='w', newline='', encoding='utf-8') as file:
-                writer = csv.DictWriter(file, fieldnames=["title", "score", "link"])
+                writer = csv.DictWriter(file, fieldnames=["title", "score", "link", "author", "time", "comments"])
                 writer.writeheader()
                 writer.writerows(self.articles)
             print(f"Data successfully saved to {filename}")
@@ -110,15 +146,27 @@ class TechNewsScraper:
     def display_articles(self, articles_list):
         """Pretty prints a list of articles."""
         print("\n" + "-"*80)
-        print(f"{'SCORE':<8} | {'TITLE'}")
+        
+        # Build header
+        header_parts = []
+        for field in self.display_fields:
+            header_parts.append(field.upper())
+        print(" | ".join(header_parts))
         print("-"*80)
         
         if not articles_list:
             print("No articles found matching that criteria.")
         
         for art in articles_list:
-            display_title = (art['title'][:70] + '..') if len(art['title']) > 70 else art['title']
-            print(f"{str(art['score']):<8} | {display_title}")
+            row_parts = []
+            for field in self.display_fields:
+                val = str(art.get(field, 'N/A'))
+                if field == 'title' and len(val) > 60:
+                    val = val[:57] + "..."
+                elif field == 'link' and len(val) > 40:
+                    val = val[:37] + "..."
+                row_parts.append(val)
+            print(" | ".join(row_parts))
         print("-"*80 + "\n")
 
 def main():
@@ -141,12 +189,25 @@ def main():
     
     # 3. Interactive Mode
     while True:
-        command = input("Enter keyword filter, 'save' to download, or 'q' to quit: ").strip().lower()
+        command = input("Enter keyword filter, 'options' to configure view, 'save' to download, or 'q' to quit: ").strip().lower()
         
         if command == 'q':
             break
         elif command == 'save':
             scraper.save_to_csv()
+        elif command == 'options':
+            print("\nAvailable fields: title, link, score, author, time, comments")
+            print(f"Current fields: {', '.join(scraper.display_fields)}")
+            new_fields = input("Enter new fields (comma separated): ").strip().lower()
+            if new_fields:
+                # Validate and set
+                valid_fields = ['title', 'link', 'score', 'author', 'time', 'comments']
+                chosen = [f.strip() for f in new_fields.split(',') if f.strip() in valid_fields]
+                if chosen:
+                    scraper.display_fields = chosen
+                    print(f"Updated display fields to: {scraper.display_fields}")
+                else:
+                    print("Invalid fields provided. Keeping current settings.")
         else:
             results = scraper.filter_by_keyword(command)
             scraper.display_articles(results)
