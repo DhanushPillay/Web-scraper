@@ -11,7 +11,10 @@
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="container position-relative">
+        <div class="position-absolute top-0 end-0">
+            <button id="darkModeToggle" class="btn btn-outline-secondary btn-sm">Dark Mode</button>
+        </div>
         <h1 class="mb-4 text-center">Hacker News Scraper</h1>
         
         <div class="card p-4 shadow-sm">
@@ -66,5 +69,28 @@
         </div>
         {% endif %}
     </div>
+
+    <script>
+        const toggleButton = document.getElementById('darkModeToggle');
+        const htmlElement = document.documentElement;
+
+        // Check local storage
+        if (localStorage.getItem('theme') === 'dark') {
+            htmlElement.setAttribute('data-bs-theme', 'dark');
+            toggleButton.textContent = 'Light Mode';
+        }
+
+        toggleButton.addEventListener('click', () => {
+            if (htmlElement.getAttribute('data-bs-theme') === 'dark') {
+                htmlElement.setAttribute('data-bs-theme', 'light');
+                toggleButton.textContent = 'Dark Mode';
+                localStorage.setItem('theme', 'light');
+            } else {
+                htmlElement.setAttribute('data-bs-theme', 'dark');
+                toggleButton.textContent = 'Light Mode';
+                localStorage.setItem('theme', 'dark');
+            }
+        });
+    </script>
 </body>
 </html>
