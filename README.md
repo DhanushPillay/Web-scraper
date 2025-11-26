@@ -6,9 +6,10 @@ A Python-based tool to scrape, filter, and view technology news from [Hacker New
 
 - **Scrape Multiple Pages**: Fetch news from multiple pages of Hacker News at once.
 - **Detailed Info**: Extracts Title, Score, Author, Time Posted, Comment Count, and Link.
-- **Smart Filtering**: Filter articles by keyword (e.g., "python", "AI").
-- **CSV Export**: Save your scraped data to a CSV file for analysis.
-- **Web Interface**: A user-friendly web dashboard to browse and filter news.
+- **Smart Filtering & Sorting**: Filter by keyword and sort by Score, Comments, or Newest.
+- **Performance Caching**: Intelligent caching system to prevent redundant requests and speed up results.
+- **Modern Web UI**: Features Dark Mode, Loading States, and a responsive design.
+- **CSV Export**: Download data directly from the Web UI or save via CLI.
 - **CLI Mode**: A robust terminal interface for quick scraping tasks.
 
 ## Installation
@@ -35,8 +36,15 @@ The web interface provides a nice visual way to interact with the scraper.
     python app.py
     ```
 2.  Open your browser and go to: `http://127.0.0.1:5000/`
-3.  Enter the number of pages to scrape and an optional keyword filter.
-4.  Click "Scrape News" to see the results.
+3.  Configure your scrape:
+    -   **Pages**: Number of pages to fetch (1-10).
+    -   **Keyword**: Optional filter (e.g., "AI").
+    -   **Sort By**: Choose Highest Score, Most Comments, or Newest.
+4.  Click "Scrape" to see the results.
+    -   *Note: Subsequent requests are cached for 10 minutes for instant loading.*
+    -   *Use "Force Refresh" to fetch fresh data immediately.*
+5.  Click "Download CSV" to save the current view.
+6.  Toggle "Dark Mode" in the top right corner for a better viewing experience.
 
 ### 2. Command Line Interface (CLI)
 If you prefer working in the terminal:
