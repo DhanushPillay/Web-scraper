@@ -1,3 +1,6 @@
 flask
 requests
 beautifulsoup4
+newspaper3k
+nltk
+lxml_html_clean

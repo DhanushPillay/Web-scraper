@@ -1,8 +1,17 @@
-from flask import Flask, render_template, request, Response, stream_with_context
+from flask import Flask, render_template, request, Response, stream_with_context, jsonify
 from web_scraper import TechNewsScraper
 import time
 import io
 import csv
+from newspaper import Article
+import nltk
+
+# Ensure NLTK data is downloaded
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+    nltk.download('punkt_tab')
 
 app = Flask(__name__)
 
@@ -122,6 +131,28 @@ def index():
             print(f"Error: {e}")
 
     return render_template('index.html', articles=articles, pages=pages, keyword=keyword, sort_by=sort_by)
+
+@app.route('/summarize', methods=['POST'])
+def summarize():
+    data = request.get_json()
+    url = data.get('url')
+    
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+        
+    try:
+        article = Article(url)
+        article.download()
+        article.parse()
+        article.nlp()
+        
+        return jsonify({
+            'title': article.title,
+            'summary': article.summary,
+            'top_image': article.top_image
+        })
+    except Exception as e:
+        return jsonify({'error': f"Failed to summarize: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

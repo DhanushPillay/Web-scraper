@@ -89,6 +89,7 @@
                             <th>Author</th>
                             <th>Time</th>
                             <th>Comments</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -99,6 +100,9 @@
                             <td>{{ article.author }}</td>
                             <td>{{ article.time }}</td>
                             <td>{{ article.comments }}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-info summarize-btn" data-url="{{ article.link }}">Summarize</button>
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -112,6 +116,32 @@
         {% endif %}
     </div>
 
+    <!-- Summary Modal -->
+    <div class="modal fade" id="summaryModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Article Summary</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="summaryLoader" class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Analyzing article...</p>
+                    </div>
+                    <div id="summaryContent" style="display: none;">
+                        <img id="summaryImage" src="" class="img-fluid mb-3 rounded" style="max-height: 300px; width: 100%; object-fit: cover; display: none;">
+                        <h4 id="summaryTitle" class="mb-3"></h4>
+                        <p id="summaryText" class="lead fs-6"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         const toggleButton = document.getElementById('darkModeToggle');
         const htmlElement = document.documentElement;
@@ -139,6 +169,61 @@
                 toggleButton.textContent = 'Light Mode';
                 localStorage.setItem('theme', 'dark');
             }
+        });
+
+        // Summarize functionality
+        const summaryModal = new bootstrap.Modal(document.getElementById('summaryModal'));
+        const summaryLoader = document.getElementById('summaryLoader');
+        const summaryContent = document.getElementById('summaryContent');
+        const summaryTitle = document.getElementById('summaryTitle');
+        const summaryText = document.getElementById('summaryText');
+        const summaryImage = document.getElementById('summaryImage');
+
+        document.querySelectorAll('.summarize-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const url = btn.dataset.url;
+                
+                // Reset and show modal
+                summaryLoader.style.display = 'block';
+                summaryContent.style.display = 'none';
+                summaryModal.show();
+                
+                try {
+                    const response = await fetch('/summarize', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ url: url })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        summaryTitle.textContent = data.title;
+                        summaryText.textContent = data.summary || "No summary available.";
+                        
+                        if (data.top_image) {
+                            summaryImage.src = data.top_image;
+                            summaryImage.style.display = 'block';
+                        } else {
+                            summaryImage.style.display = 'none';
+                        }
+                        
+                        summaryLoader.style.display = 'none';
+                        summaryContent.style.display = 'block';
+                    } else {
+                        throw new Error(data.error || 'Failed to summarize');
+                    }
+                } catch (error) {
+                    summaryTitle.textContent = "Error";
+                    summaryText.textContent = error.message;
+                    summaryImage.style.display = 'none';
+                    summaryLoader.style.display = 'none';
+                    summaryContent.style.display = 'block';
+                }
+            });
         });
     </script>
 </body>
