@@ -16,15 +16,17 @@ except LookupError:
 app = Flask(__name__)
 
 # Simple in-memory cache
-CACHE = {
+# Use type hinting for better clarity
+CACHE: dict = {
     "articles": [],
     "last_updated": 0,
     "pages_scraped": 0
 }
-CACHE_DURATION = 600  # 10 minutes
+CACHE_DURATION: int = 600  # 10 minutes
 
 @app.route('/download')
-def download_csv():
+def download_csv() -> Response:
+    """Generates and downloads a CSV file of the articles."""
     # Get current filter params
     keyword = request.args.get('keyword', '').strip().lower()
     sort_by = request.args.get('sort', 'score')
@@ -67,7 +69,8 @@ def download_csv():
     return Response(stream_with_context(generate()), mimetype='text/csv', headers={"Content-Disposition": "attachment; filename=tech_news.csv"})
 
 @app.route('/', methods=['GET', 'POST'])
-def index():
+def index() -> str:
+    """Main route for the dashboard. Handles scraping, filtering, and sorting."""
     articles = []
     pages = 1
     keyword = ""
@@ -133,7 +136,8 @@ def index():
     return render_template('index.html', articles=articles, pages=pages, keyword=keyword, sort_by=sort_by)
 
 @app.route('/summarize', methods=['POST'])
-def summarize():
+def summarize() -> Response:
+    """API endpoint to summarize a given URL."""
     data = request.get_json()
     url = data.get('url')
     

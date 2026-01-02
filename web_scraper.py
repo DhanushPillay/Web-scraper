@@ -5,17 +5,20 @@ import time
 import sys
 
 class TechNewsScraper:
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initializes the scraper with base URL and default settings."""
         # Base URL for the news page
-        self.base_url = "https://news.ycombinator.com/news"
-        self.articles = []
+        self.base_url: str = "https://news.ycombinator.com/news"
+        self.articles: list[dict] = []
         # Default fields to display
-        self.display_fields = ['score', 'title']
+        self.display_fields: list[str] = ['score', 'title']
 
-    def scrape_headlines(self, num_pages=3):
+    def scrape_headlines(self, num_pages: int = 3) -> None:
         """
         Scrapes multiple pages of Hacker News.
-        num_pages: How many pages to scrape (default 3, approx 90 stories).
+
+        Args:
+            num_pages (int): How many pages to scrape (default 3, approx 90 stories).
         """
         print(f"Starting scrape for {num_pages} pages...")
         
@@ -34,7 +37,7 @@ class TechNewsScraper:
         
         print(f"\nDone! Collected {len(self.articles)} total articles.")
 
-    def _fetch_url(self, url):
+    def _fetch_url(self, url: str) -> str | None:
         """Helper to download a single page."""
         try:
             headers = {'User-Agent': 'Python TechScraper Project/2.0'}
@@ -49,7 +52,7 @@ class TechNewsScraper:
             print(f"Error fetching {url}: {e}")
             return None
 
-    def _parse_html(self, html_content):
+    def _parse_html(self, html_content: str) -> None:
         """Parses the HTML and appends found stories to self.articles."""
         soup = BeautifulSoup(html_content, 'html.parser')
         story_rows = soup.find_all('tr', class_='athing')
@@ -119,7 +122,7 @@ class TechNewsScraper:
                 
         print(f"  -> Found {found_on_page} articles on this page.")
 
-    def filter_by_keyword(self, keyword):
+    def filter_by_keyword(self, keyword: str) -> list[dict]:
         """Filters the collected articles."""
         print(f"\nSearching {len(self.articles)} articles for: '{keyword}'")
         filtered = [
@@ -128,7 +131,7 @@ class TechNewsScraper:
         ]
         return filtered
 
-    def save_to_csv(self, filename="tech_news.csv"):
+    def save_to_csv(self, filename: str = "tech_news.csv") -> None:
         """Saves all collected articles to CSV."""
         if not self.articles:
             print("No data to save.")
@@ -143,7 +146,7 @@ class TechNewsScraper:
         except Exception as e:
             print(f"Error saving file: {e}")
 
-    def display_articles(self, articles_list):
+    def display_articles(self, articles_list: list[dict]) -> None:
         """Pretty prints a list of articles."""
         print("\n" + "-"*80)
         
