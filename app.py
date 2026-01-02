@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify
 from web_scraper import NewsAggregator
+from database import Database
 import time
 import io
 import csv
@@ -15,14 +16,8 @@ except LookupError:
 
 app = Flask(__name__)
 
-# Simple in-memory cache
-# Use type hinting for better clarity
-CACHE: dict = {
-    "articles": [],
-    "last_updated": 0,
-    "pages_scraped": 0
-}
-CACHE_DURATION: int = 600  # 10 minutes
+# Initialize Database
+db = Database()
 
 @app.route('/download')
 def download_csv() -> Response:
@@ -31,19 +26,14 @@ def download_csv() -> Response:
     keyword = request.args.get('keyword', '').strip().lower()
     sort_by = request.args.get('sort', 'score')
     
-    # Use cached data if available, otherwise empty (or could trigger scrape, but let's rely on cache)
-    articles = CACHE['articles']
+    # Fetch from DB (get all for download, let's limit to 500 for sanity)
+    articles = db.get_articles(limit=500, keyword=keyword)
     
-    # Filter
-    if keyword:
-        articles = [art for art in articles if keyword in art['title'].lower()]
-    
-    # Sort
+    # Sort in memory for download flexibility
     if sort_by == 'comments':
         articles = sorted(articles, key=lambda x: int(x['comments']) if str(x['comments']).isdigit() else 0, reverse=True)
     elif sort_by == 'newest':
-        # Simple heuristic for 'newest' based on 'time' string is hard without parsing, 
-        # but we can assume the scraper order (page 1 top) is roughly newest.
+        # DB already returns sorted by created_at (newest first discovery)
         pass 
     else: # score
         articles = sorted(articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
@@ -72,14 +62,11 @@ def download_csv() -> Response:
 @app.route('/', methods=['GET', 'POST'])
 def index() -> str:
     """Main route for the dashboard. Handles scraping, filtering, and sorting."""
-    articles = []
     pages = 1
     keyword = ""
     sort_by = "score"
     source_filter = "all"
     
-    global CACHE
-
     if request.method == 'POST':
         try:
             pages = int(request.form.get('pages', 1))
@@ -88,50 +75,39 @@ def index() -> str:
             source_filter = request.form.get('source', 'all')
             force_refresh = request.form.get('refresh') == 'true'
             
-            current_time = time.time()
+            # Scrape only if requested (Force Refresh) or if DB is empty (implicit first run logic)
+            # For this UI, "Scrape" button implies "Get fresh data".
+            # So we effectively always scrape on POST unless we want to be very strict.
+            # But the user might just be filtering. 
+            # Logic: If pages/keyword/source changes but 'Scrape' button was effectively clicked...
+            # Actually, the form submit is the only way to filter right now.
+            # Let's say: If 'refresh' is checked OR db is empty, we scrape. 
+            # Otherwise we just query DB.
             
-            # Check Cache
-            if (not force_refresh and 
-                (current_time - CACHE['last_updated'] < CACHE_DURATION) and 
-                CACHE['pages_scraped'] >= pages and
-                CACHE['articles']):
-                
-                print("Using cached data...")
-                articles = CACHE['articles']
-            else:
-                print("Scraping fresh data...")
+            should_scrape = force_refresh or (db.get_article_count() == 0)
+            
+            if should_scrape:
+                print("Scraping fresh data and saving to DB...")
                 aggregator = NewsAggregator()
-                
-                # Scrape data (HN pages + 1 page for others)
                 aggregator.scrape_all(hn_pages=pages)
-                
-                # Update Cache
-                CACHE['articles'] = aggregator.get_articles()
-                CACHE['pages_scraped'] = pages
-                CACHE['last_updated'] = current_time
-                
-                articles = CACHE['articles']
-            
-            # Filter by keyword
-            if keyword:
-                articles = [art for art in articles if keyword.lower() in art['title'].lower()]
-            
-            # Filter by Source
-            if source_filter and source_filter != 'all':
-                # Fuzzy match or exact match depending on scraper naming
-                # Our sources: 'Hacker News', 'TechCrunch', 'Reddit'
-                articles = [art for art in articles if source_filter in art.get('source', '')]
+                new_articles = aggregator.get_articles()
+                db.add_articles(new_articles)
+            else:
+                 print("Querying existing data...")
 
-            # Sort
-            if sort_by == 'comments':
-                articles = sorted(articles, key=lambda x: int(x['comments']) if str(x['comments']).isdigit() else 0, reverse=True)
-            elif sort_by == 'newest':
-                pass
-            else: # score
-                articles = sorted(articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
-            
         except Exception as e:
             print(f"Error: {e}")
+
+    # Always fetch result to display
+    # Default limit to 100 for display
+    articles = db.get_articles(limit=100, source_filter=source_filter, keyword=keyword)
+    
+    # Sort in memory for display adjustments
+    if sort_by == 'comments':
+        articles = sorted(articles, key=lambda x: int(x['comments']) if str(x['comments']).isdigit() else 0, reverse=True)
+    elif sort_by == 'score':
+         articles = sorted(articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
+    # default or 'newest' uses DB order (created_at DESC)
 
     return render_template('index.html', articles=articles, pages=pages, keyword=keyword, sort_by=sort_by, source=source_filter)
 
