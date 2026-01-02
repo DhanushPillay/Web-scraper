@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, Response, stream_with_context, jsonify
-from web_scraper import TechNewsScraper
+from web_scraper import NewsAggregator
 import time
 import io
 import csv
@@ -44,15 +44,14 @@ def download_csv() -> Response:
     elif sort_by == 'newest':
         # Simple heuristic for 'newest' based on 'time' string is hard without parsing, 
         # but we can assume the scraper order (page 1 top) is roughly newest.
-        # Or we can try to parse "X hours ago". For now, let's just keep original order for "newest"
         pass 
     else: # score
-        articles = sorted(articles, key=lambda x: x['score'], reverse=True)
+        articles = sorted(articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
 
     # Generate CSV
     def generate():
         data = io.StringIO()
-        w = csv.DictWriter(data, fieldnames=["title", "score", "link", "author", "time", "comments"])
+        w = csv.DictWriter(data, fieldnames=["title", "score", "link", "author", "time", "comments", "source"])
         w.writeheader()
         data.seek(0)
         yield data.read()
@@ -60,7 +59,9 @@ def download_csv() -> Response:
         data.seek(0)
         
         for article in articles:
-            w.writerow(article)
+            # Ensure safe access to all fields
+            safe_article = {k: article.get(k, '') for k in ["title", "score", "link", "author", "time", "comments", "source"]}
+            w.writerow(safe_article)
             data.seek(0)
             yield data.read()
             data.truncate(0)
@@ -75,6 +76,7 @@ def index() -> str:
     pages = 1
     keyword = ""
     sort_by = "score"
+    source_filter = "all"
     
     global CACHE
 
@@ -83,57 +85,55 @@ def index() -> str:
             pages = int(request.form.get('pages', 1))
             keyword = request.form.get('keyword', '').strip()
             sort_by = request.form.get('sort', 'score')
+            source_filter = request.form.get('source', 'all')
             force_refresh = request.form.get('refresh') == 'true'
             
             current_time = time.time()
             
             # Check Cache
-            # We use cache if:
-            # 1. Not forced to refresh
-            # 2. Cache is not expired
-            # 3. We have enough pages scraped already
             if (not force_refresh and 
                 (current_time - CACHE['last_updated'] < CACHE_DURATION) and 
-                CACHE['pages_scraped'] >= pages):
+                CACHE['pages_scraped'] >= pages and
+                CACHE['articles']):
                 
                 print("Using cached data...")
-                # Use sliced data from cache (we might have scraped 10 pages, but user asked for 3)
-                # Note: This is an approximation. 3 pages of scrape might differ slightly from top X of 10 pages.
-                # But for performance, using the big cache is better.
                 articles = CACHE['articles']
             else:
                 print("Scraping fresh data...")
-                # Initialize scraper
-                scraper = TechNewsScraper()
+                aggregator = NewsAggregator()
                 
-                # Scrape data
-                scraper.scrape_headlines(num_pages=pages)
+                # Scrape data (HN pages + 1 page for others)
+                aggregator.scrape_all(hn_pages=pages)
                 
                 # Update Cache
-                CACHE['articles'] = scraper.articles
+                CACHE['articles'] = aggregator.get_articles()
                 CACHE['pages_scraped'] = pages
                 CACHE['last_updated'] = current_time
                 
                 articles = CACHE['articles']
             
-            # Filter if keyword is provided
+            # Filter by keyword
             if keyword:
-                # Use the scraper's method or list comprehension
                 articles = [art for art in articles if keyword.lower() in art['title'].lower()]
-                
+            
+            # Filter by Source
+            if source_filter and source_filter != 'all':
+                # Fuzzy match or exact match depending on scraper naming
+                # Our sources: 'Hacker News', 'TechCrunch', 'Reddit'
+                articles = [art for art in articles if source_filter in art.get('source', '')]
+
             # Sort
             if sort_by == 'comments':
                 articles = sorted(articles, key=lambda x: int(x['comments']) if str(x['comments']).isdigit() else 0, reverse=True)
             elif sort_by == 'newest':
-                # Keep original order (roughly newest first)
                 pass
             else: # score
-                articles = sorted(articles, key=lambda x: x['score'], reverse=True)
+                articles = sorted(articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
             
         except Exception as e:
             print(f"Error: {e}")
 
-    return render_template('index.html', articles=articles, pages=pages, keyword=keyword, sort_by=sort_by)
+    return render_template('index.html', articles=articles, pages=pages, keyword=keyword, sort_by=sort_by, source=source_filter)
 
 @app.route('/summarize', methods=['POST'])
 def summarize() -> Response:

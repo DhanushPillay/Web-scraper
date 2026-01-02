@@ -43,15 +43,24 @@
         <div class="card p-4 shadow-sm">
             <form action="/" method="post" id="scrapeForm">
                 <div class="row g-3 align-items-end">
-                    <div class="col-md-3">
-                        <label for="pages" class="form-label">Number of Pages (1-10)</label>
+                    <div class="col-md-2">
+                        <label for="pages" class="form-label">Pages (HN)</label>
                         <input type="number" class="form-control" id="pages" name="pages" min="1" max="10" value="{{ pages or 1 }}">
                     </div>
-                    <div class="col-md-4">
-                        <label for="keyword" class="form-label">Filter Keyword (Optional)</label>
-                        <input type="text" class="form-control" id="keyword" name="keyword" placeholder="e.g., python, ai" value="{{ keyword or '' }}">
+                    <div class="col-md-3">
+                        <label for="source" class="form-label">Source</label>
+                        <select class="form-select" id="source" name="source">
+                            <option value="all" {% if source == 'all' %}selected{% endif %}>All Sources</option>
+                            <option value="Hacker News" {% if source == 'Hacker News' %}selected{% endif %}>Hacker News</option>
+                            <option value="TechCrunch" {% if source == 'TechCrunch' %}selected{% endif %}>TechCrunch</option>
+                            <option value="Reddit" {% if source == 'Reddit' %}selected{% endif %}>Reddit</option>
+                        </select>
                     </div>
                     <div class="col-md-3">
+                        <label for="keyword" class="form-label">Filter Keyword</label>
+                        <input type="text" class="form-control" id="keyword" name="keyword" placeholder="e.g., python, ai" value="{{ keyword or '' }}">
+                    </div>
+                    <div class="col-md-2">
                         <label for="sort" class="form-label">Sort By</label>
                         <select class="form-select" id="sort" name="sort">
                             <option value="score" {% if sort_by == 'score' %}selected{% endif %}>Highest Score</option>
@@ -85,6 +94,7 @@
                     <thead class="table-dark">
                         <tr>
                             <th>Score</th>
+                            <th>Source</th>
                             <th>Title</th>
                             <th>Author</th>
                             <th>Time</th>
@@ -96,6 +106,17 @@
                         {% for article in articles %}
                         <tr>
                             <td><span class="badge bg-secondary">{{ article.score }}</span></td>
+                            <td>
+                                {% if article.source == 'Hacker News' %}
+                                    <span class="badge bg-warning text-dark">HN</span>
+                                {% elif article.source == 'TechCrunch' %}
+                                    <span class="badge bg-success">TC</span>
+                                {% elif article.source == 'Reddit' %}
+                                    <span class="badge bg-danger">Reddit</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ article.source }}</span>
+                                {% endif %}
+                            </td>
                             <td><a href="{{ article.link }}" target="_blank" class="text-decoration-none">{{ article.title }}</a></td>
                             <td>{{ article.author }}</td>
                             <td>{{ article.time }}</td>

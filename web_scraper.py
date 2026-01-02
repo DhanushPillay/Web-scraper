@@ -3,74 +3,64 @@ from bs4 import BeautifulSoup
 import csv
 import time
 import sys
+from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 
-class TechNewsScraper:
+class BaseScraper(ABC):
+    """Abstract base class for all news scrapers."""
+    
     def __init__(self) -> None:
-        """Initializes the scraper with base URL and default settings."""
-        # Base URL for the news page
-        self.base_url: str = "https://news.ycombinator.com/news"
         self.articles: list[dict] = []
-        # Default fields to display
-        self.display_fields: list[str] = ['score', 'title']
+        self.display_fields: list[str] = ['score', 'title', 'source']
 
-    def scrape_headlines(self, num_pages: int = 3) -> None:
-        """
-        Scrapes multiple pages of Hacker News.
+    @abstractmethod
+    def scrape(self, num_pages: int = 1) -> None:
+        pass
 
-        Args:
-            num_pages (int): How many pages to scrape (default 3, approx 90 stories).
-        """
-        print(f"Starting scrape for {num_pages} pages...")
-        
+    def get_articles(self) -> list[dict]:
+        return self.articles
+
+class HackerNewsScraper(BaseScraper):
+    """Scraper for Hacker News."""
+    
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_url: str = "https://news.ycombinator.com/news"
+
+    def scrape(self, num_pages: int = 3) -> None:
+        print(f"[HN] Starting scrape for {num_pages} pages...")
         for p in range(1, num_pages + 1):
-            # Construct the URL for specific pages (e.g., ?p=1, ?p=2)
             url = f"{self.base_url}?p={p}"
-            print(f"Fetching page {p}...")
-            
             html = self._fetch_url(url)
             if html:
                 self._parse_html(html)
-                
-            # ETHICAL SCRAPING: Wait 1 second between requests to be polite to the server
             if p < num_pages:
                 time.sleep(1)
-        
-        print(f"\nDone! Collected {len(self.articles)} total articles.")
+        print(f"[HN] Done. Collected {len(self.articles)} articles.")
 
     def _fetch_url(self, url: str) -> str | None:
-        """Helper to download a single page."""
         try:
             headers = {'User-Agent': 'Python TechScraper Project/2.0'}
             response = requests.get(url, headers=headers, timeout=10)
-            
             if response.status_code == 200:
                 return response.text
-            else:
-                print(f"Failed to connect to {url}. Status: {response.status_code}")
-                return None
+            return None
         except Exception as e:
-            print(f"Error fetching {url}: {e}")
+            print(f"[HN] Error fetching {url}: {e}")
             return None
 
     def _parse_html(self, html_content: str) -> None:
-        """Parses the HTML and appends found stories to self.articles."""
         soup = BeautifulSoup(html_content, 'html.parser')
         story_rows = soup.find_all('tr', class_='athing')
         
-        found_on_page = 0
-        
         for row in story_rows:
             try:
-                # 1. Get Title and Link
                 title_element = row.find('span', class_='titleline').find('a')
                 title = title_element.text
                 link = title_element['href']
-                
-                # Fix relative links (e.g., "item?id=...")
                 if not link.startswith('http'):
                     link = f"https://news.ycombinator.com/{link}"
                 
-                # 2. Get Metadata (Score, Author, Time, Comments)
                 metadata_row = row.find_next_sibling('tr')
                 subtext = metadata_row.find('td', class_='subtext')
                 
@@ -80,140 +70,188 @@ class TechNewsScraper:
                 comments = "0"
 
                 if subtext:
-                    # Score
                     score_elem = subtext.find('span', class_='score')
                     if score_elem:
                         score = int(score_elem.text.split()[0])
                     
-                    # Author
                     author_elem = subtext.find('a', class_='hnuser')
                     if author_elem:
                         author = author_elem.text
                         
-                    # Time
                     age_elem = subtext.find('span', class_='age')
                     if age_elem:
                         time_posted = age_elem.text
                         
-                    # Comments
                     links = subtext.find_all('a')
                     for l in links:
                         if 'comment' in l.text:
                             comments = l.text.split()[0]
                             if comments == 'discuss': comments = "0"
                             break
-                        if 'discuss' in l.text:
-                            comments = "0"
-                            break
-                
-                # Append to the main list
+
                 self.articles.append({
                     'title': title,
                     'link': link,
                     'score': score,
                     'author': author,
                     'time': time_posted,
-                    'comments': comments
+                    'comments': comments,
+                    'source': 'Hacker News'
                 })
-                found_on_page += 1
-                
             except AttributeError:
                 continue
-                
-        print(f"  -> Found {found_on_page} articles on this page.")
 
-    def filter_by_keyword(self, keyword: str) -> list[dict]:
-        """Filters the collected articles."""
-        print(f"\nSearching {len(self.articles)} articles for: '{keyword}'")
-        filtered = [
-            art for art in self.articles 
-            if keyword.lower() in art['title'].lower()
+    def get_top_comment(self, article_link: str) -> str | None:
+        """Fetches the top comment for a given HN story link."""
+        # Note: Logic to find the specific item ID from the link might be tricky if it's external
+        # But if we have the 'comments' link (from subtext), we can use that.
+        # For now, let's assume we don't have the internal ID easily mapped unless we saved it.
+        # TODO: Enhanced scraper could save the 'item?id=...' link as the 'comments_link'
+        return None
+
+class TechCrunchScraper(BaseScraper):
+    """Scraper for TechCrunch."""
+    
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_url: str = "https://techcrunch.com/"
+
+    def scrape(self, num_pages: int = 1) -> None:
+        # TechCrunch is harder to verify for pagination without JS for some layouts,
+        # but the main page has latest stories.
+        # simpler implementation: scrape main page only for now or use /category/technology/page/x
+        
+        print(f"[TC] Starting scrape...")
+        # Scraping page 1 only for stability in this demo version
+        url = self.base_url
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                # TechCrunch markup changes often, targeting standard article headers
+                # Looking for h2 or h3 with links
+                articles = soup.find_all('h3', class_='loop-card__title')
+                if not articles:
+                    articles = soup.select('.post-block__title a') # Backup selector
+
+                for art in articles:
+                    a_tag = art.find('a') if art.name != 'a' else art
+                    if not a_tag: continue
+                    
+                    title = a_tag.text.strip()
+                    link = a_tag['href']
+                    
+                    # Try to find author/time if possible (complex on TC without specific selectors)
+                    # keeping it simple
+                    
+                    self.articles.append({
+                        'title': title,
+                        'link': link,
+                        'score': 0, # TC doesn't have scores
+                        'author': 'TechCrunch',
+                        'time': 'Recent',
+                        'comments': '0',
+                        'source': 'TechCrunch'
+                    })
+        except Exception as e:
+            print(f"[TC] Error: {e}")
+        print(f"[TC] Done. Collected {len(self.articles)} articles.")
+
+class RedditScraper(BaseScraper):
+    """Scraper for r/technology using JSON API."""
+    
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_url: str = "https://www.reddit.com/r/technology/top.json?t=day&limit=25"
+
+    def scrape(self, num_pages: int = 1) -> None:
+        print(f"[Reddit] Starting scrape...")
+        try:
+            headers = {'User-Agent': 'Python TechScraper Project/2.0'}
+            # num_pages calculation is rough for JSON API, just doing one batch
+            url = self.base_url
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                children = data.get('data', {}).get('children', [])
+                
+                for post in children:
+                    p_data = post.get('data', {})
+                    self.articles.append({
+                        'title': p_data.get('title'),
+                        'link': p_data.get('url'),
+                        'score': p_data.get('score', 0),
+                        'author': p_data.get('author'),
+                        'time': 'Today', # simplifying
+                        'comments': str(p_data.get('num_comments', 0)),
+                        'source': 'Reddit'
+                    })
+        except Exception as e:
+            print(f"[Reddit] Error: {e}")
+        print(f"[Reddit] Done. Collected {len(self.articles)} articles.")
+
+
+class NewsAggregator:
+    def __init__(self) -> None:
+        self.scrapers: list[BaseScraper] = [
+            HackerNewsScraper(),
+            TechCrunchScraper(),
+            RedditScraper()
         ]
-        return filtered
+        self.articles: list[dict] = []
+
+    def scrape_all(self, hn_pages: int = 1) -> None:
+        """Runs all scrapers in parallel."""
+        self.articles = []
+        
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # HN gets variable pages, others get 1 for now
+            executor.submit(self.scrapers[0].scrape, hn_pages)
+            executor.submit(self.scrapers[1].scrape, 1)
+            executor.submit(self.scrapers[2].scrape, 1) # Reddit
+            
+        # Collect results
+        for scraper in self.scrapers:
+            self.articles.extend(scraper.get_articles())
+            
+    def get_articles(self) -> list[dict]:
+        return self.articles
+
+    def filter_by_keyword(self, articles: list[dict], keyword: str) -> list[dict]:
+        if not keyword: return articles
+        return [art for art in articles if keyword.lower() in art['title'].lower()]
 
     def save_to_csv(self, filename: str = "tech_news.csv") -> None:
-        """Saves all collected articles to CSV."""
         if not self.articles:
             print("No data to save.")
             return
 
         try:
             with open(filename, mode='w', newline='', encoding='utf-8') as file:
-                writer = csv.DictWriter(file, fieldnames=["title", "score", "link", "author", "time", "comments"])
+                writer = csv.DictWriter(file, fieldnames=["title", "score", "link", "author", "time", "comments", "source"])
                 writer.writeheader()
                 writer.writerows(self.articles)
             print(f"Data successfully saved to {filename}")
         except Exception as e:
             print(f"Error saving file: {e}")
 
-    def display_articles(self, articles_list: list[dict]) -> None:
-        """Pretty prints a list of articles."""
-        print("\n" + "-"*80)
-        
-        # Build header
-        header_parts = []
-        for field in self.display_fields:
-            header_parts.append(field.upper())
-        print(" | ".join(header_parts))
-        print("-"*80)
-        
-        if not articles_list:
-            print("No articles found matching that criteria.")
-        
-        for art in articles_list:
-            row_parts = []
-            for field in self.display_fields:
-                val = str(art.get(field, 'N/A'))
-                if field == 'title' and len(val) > 60:
-                    val = val[:57] + "..."
-                elif field == 'link' and len(val) > 40:
-                    val = val[:37] + "..."
-                row_parts.append(val)
-            print(" | ".join(row_parts))
-        print("-"*80 + "\n")
-
-def main():
-    scraper = TechNewsScraper()
+# Legacy support for main execution
+def main() -> None:
+    agg = NewsAggregator()
+    print("Scraping all sources...")
+    agg.scrape_all(hn_pages=2)
     
-    # ASK USER: How deep do you want to dig?
-    try:
-        pages = int(input("How many pages do you want to scrape? (1-10): ").strip())
-        if pages > 10: pages = 10 # Cap it at 10 for safety
-    except ValueError:
-        pages = 3 # Default if they type nonsense
+    # Sort by score for display
+    sorted_arts = sorted(agg.articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
     
-    # 1. Scrape multiple pages
-    scraper.scrape_headlines(num_pages=pages)
+    print(f"\nTotal articles: {len(sorted_arts)}")
+    print("-" * 80)
+    print(f"{'SOURCE':<12} | {'SCORE':<5} | {'TITLE'}")
+    print("-" * 80)
     
-    # 2. Show top 5 highest rated from the WHOLE batch
-    print("\n--- TOP TRENDING ACROSS ALL PAGES ---")
-    sorted_articles = sorted(scraper.articles, key=lambda x: x['score'], reverse=True)
-    scraper.display_articles(sorted_articles[:5])
-    
-    # 3. Interactive Mode
-    while True:
-        command = input("Enter keyword filter, 'options' to configure view, 'save' to download, or 'q' to quit: ").strip().lower()
-        
-        if command == 'q':
-            break
-        elif command == 'save':
-            scraper.save_to_csv()
-        elif command == 'options':
-            print("\nAvailable fields: title, link, score, author, time, comments")
-            print(f"Current fields: {', '.join(scraper.display_fields)}")
-            new_fields = input("Enter new fields (comma separated): ").strip().lower()
-            if new_fields:
-                # Validate and set
-                valid_fields = ['title', 'link', 'score', 'author', 'time', 'comments']
-                chosen = [f.strip() for f in new_fields.split(',') if f.strip() in valid_fields]
-                if chosen:
-                    scraper.display_fields = chosen
-                    print(f"Updated display fields to: {scraper.display_fields}")
-                else:
-                    print("Invalid fields provided. Keeping current settings.")
-        else:
-            results = scraper.filter_by_keyword(command)
-            scraper.display_articles(results)
+    for art in sorted_arts[:20]:
+        print(f"{art['source'][:12]:<12} | {str(art['score']):<5} | {art['title'][:60]}")
 
 if __name__ == "__main__":
     main()
