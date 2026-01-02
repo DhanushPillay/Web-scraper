@@ -111,6 +111,31 @@ def index() -> str:
 
     return render_template('index.html', articles=articles, pages=pages, keyword=keyword, sort_by=sort_by, source=source_filter)
 
+@app.route('/saved')
+def saved_articles() -> str:
+    """Displays stored bookmarks."""
+    # Reusing index template but with saved_only filter
+    articles = db.get_articles(limit=500, saved_only=True)
+    return render_template('index.html', articles=articles, pages=1, keyword="", sort_by="newest", source="all", showing_saved=True)
+
+@app.route('/bookmark/<int:article_id>', methods=['POST'])
+def toggle_bookmark(article_id: int) -> Response:
+    """Toggles bookmark status."""
+    new_status = db.toggle_bookmark(article_id)
+    return jsonify({'id': article_id, 'is_saved': new_status})
+
+@app.route('/subscribe', methods=['POST'])
+def subscribe() -> Response:
+    """Handle email subscription (Skeleton)."""
+    data = request.get_json()
+    email = data.get('email')
+    if not email or '@' not in email:
+        return jsonify({'error': 'Invalid email'}), 400
+    
+    # In a real app, save to DB or mailing list service
+    print(f"New subscriber: {email}")
+    return jsonify({'message': 'Subscribed successfully!'})
+
 @app.route('/summarize', methods=['POST'])
 def summarize() -> Response:
     """API endpoint to summarize a given URL."""

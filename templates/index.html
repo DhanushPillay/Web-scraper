@@ -1,13 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hacker News Scraper</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
     <style>
-        body { padding-top: 2rem; }
-        .news-table { margin-top: 2rem; }
+        body {
+            padding-top: 2rem;
+        }
+
+        .news-table {
+            margin-top: 2rem;
+        }
+
         .spinner-overlay {
             display: none;
             position: fixed;
@@ -15,15 +23,27 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0, 0, 0, 0.5);
             z-index: 9999;
             justify-content: center;
             align-items: center;
             color: white;
             flex-direction: column;
         }
+
+        .bookmark-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #6c757d;
+        }
+
+        .bookmark-btn.saved {
+            color: #ffc107;
+        }
     </style>
 </head>
+
 <body>
     <!-- Loading Spinner -->
     <div id="loadingSpinner" class="spinner-overlay">
@@ -35,37 +55,48 @@
     </div>
 
     <div class="container position-relative">
-        <div class="position-absolute top-0 end-0">
-            <button id="darkModeToggle" class="btn btn-outline-secondary btn-sm">Dark Mode</button>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="mb-0">Hacker News Scraper</h1>
+            <div class="d-flex gap-2">
+                <a href="/" class="btn btn-outline-primary btn-sm {% if not showing_saved %}active{% endif %}">Home</a>
+                <a href="/saved" class="btn btn-outline-warning btn-sm {% if showing_saved %}active{% endif %}">Saved
+                    Articles</a>
+                <button id="darkModeToggle" class="btn btn-outline-secondary btn-sm">Dark Mode</button>
+            </div>
         </div>
-        <h1 class="mb-4 text-center">Hacker News Scraper</h1>
-        
+
+        {% if not showing_saved %}
         <div class="card p-4 shadow-sm">
             <form action="/" method="post" id="scrapeForm">
                 <div class="row g-3 align-items-end">
                     <div class="col-md-2">
                         <label for="pages" class="form-label">Pages (HN)</label>
-                        <input type="number" class="form-control" id="pages" name="pages" min="1" max="10" value="{{ pages or 1 }}">
+                        <input type="number" class="form-control" id="pages" name="pages" min="1" max="10"
+                            value="{{ pages or 1 }}">
                     </div>
                     <div class="col-md-3">
                         <label for="source" class="form-label">Source</label>
                         <select class="form-select" id="source" name="source">
-                            <option value="all" {% if source == 'all' %}selected{% endif %}>All Sources</option>
-                            <option value="Hacker News" {% if source == 'Hacker News' %}selected{% endif %}>Hacker News</option>
-                            <option value="TechCrunch" {% if source == 'TechCrunch' %}selected{% endif %}>TechCrunch</option>
-                            <option value="Reddit" {% if source == 'Reddit' %}selected{% endif %}>Reddit</option>
+                            <option value="all" {% if source=='all' %}selected{% endif %}>All Sources</option>
+                            <option value="Hacker News" {% if source=='Hacker News' %}selected{% endif %}>Hacker News
+                            </option>
+                            <option value="TechCrunch" {% if source=='TechCrunch' %}selected{% endif %}>TechCrunch
+                            </option>
+                            <option value="Reddit" {% if source=='Reddit' %}selected{% endif %}>Reddit</option>
                         </select>
                     </div>
                     <div class="col-md-3">
                         <label for="keyword" class="form-label">Filter Keyword</label>
-                        <input type="text" class="form-control" id="keyword" name="keyword" placeholder="e.g., python, ai" value="{{ keyword or '' }}">
+                        <input type="text" class="form-control" id="keyword" name="keyword"
+                            placeholder="e.g., python, ai" value="{{ keyword or '' }}">
                     </div>
                     <div class="col-md-2">
                         <label for="sort" class="form-label">Sort By</label>
                         <select class="form-select" id="sort" name="sort">
-                            <option value="score" {% if sort_by == 'score' %}selected{% endif %}>Highest Score</option>
-                            <option value="comments" {% if sort_by == 'comments' %}selected{% endif %}>Most Comments</option>
-                            <option value="newest" {% if sort_by == 'newest' %}selected{% endif %}>Newest</option>
+                            <option value="score" {% if sort_by=='score' %}selected{% endif %}>Highest Score</option>
+                            <option value="comments" {% if sort_by=='comments' %}selected{% endif %}>Most Comments
+                            </option>
+                            <option value="newest" {% if sort_by=='newest' %}selected{% endif %}>Newest</option>
                         </select>
                     </div>
                     <div class="col-md-2">
@@ -80,19 +111,27 @@
                 </div>
             </form>
         </div>
+        {% else %}
+        <div class="alert alert-info">
+            Showing stored bookmarks. <a href="/">Back to all news</a>.
+        </div>
+        {% endif %}
 
         {% if articles %}
         <div class="news-table">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h3>Results ({{ articles|length }})</h3>
+                <h3>{% if showing_saved %}Saved Articles{% else %}Results{% endif %} ({{ articles|length }})</h3>
+                {% if not showing_saved %}
                 <a href="/download?keyword={{ keyword }}&sort={{ sort_by }}" class="btn btn-success btn-sm">
                     Download CSV
                 </a>
+                {% endif %}
             </div>
             <div class="table-responsive">
                 <table class="table table-striped table-hover">
                     <thead class="table-dark">
                         <tr>
+                            <th style="width: 50px;">Save</th>
                             <th>Score</th>
                             <th>Source</th>
                             <th>Title</th>
@@ -105,24 +144,32 @@
                     <tbody>
                         {% for article in articles %}
                         <tr>
+                            <td class="text-center">
+                                <button class="bookmark-btn {% if article.is_saved %}saved{% endif %}"
+                                    data-id="{{ article.id }}" title="Bookmark">
+                                    <i class="bi {% if article.is_saved %}bi-star-fill{% else %}bi-star{% endif %}"></i>
+                                </button>
+                            </td>
                             <td><span class="badge bg-secondary">{{ article.score }}</span></td>
                             <td>
                                 {% if article.source == 'Hacker News' %}
-                                    <span class="badge bg-warning text-dark">HN</span>
+                                <span class="badge bg-warning text-dark">HN</span>
                                 {% elif article.source == 'TechCrunch' %}
-                                    <span class="badge bg-success">TC</span>
+                                <span class="badge bg-success">TC</span>
                                 {% elif article.source == 'Reddit' %}
-                                    <span class="badge bg-danger">Reddit</span>
+                                <span class="badge bg-danger">Reddit</span>
                                 {% else %}
-                                    <span class="badge bg-secondary">{{ article.source }}</span>
+                                <span class="badge bg-secondary">{{ article.source }}</span>
                                 {% endif %}
                             </td>
-                            <td><a href="{{ article.link }}" target="_blank" class="text-decoration-none">{{ article.title }}</a></td>
+                            <td><a href="{{ article.link }}" target="_blank" class="text-decoration-none">{{
+                                    article.title }}</a></td>
                             <td>{{ article.author }}</td>
                             <td>{{ article.time }}</td>
                             <td>{{ article.comments }}</td>
                             <td>
-                                <button class="btn btn-sm btn-outline-info summarize-btn" data-url="{{ article.link }}">Summarize</button>
+                                <button class="btn btn-sm btn-outline-info summarize-btn"
+                                    data-url="{{ article.link }}">Summarize</button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -130,12 +177,33 @@
                 </table>
             </div>
         </div>
-        {% elif request.method == 'POST' %}
+        {% elif request.method == 'POST' or showing_saved %}
         <div class="alert alert-warning mt-4" role="alert">
-            No articles found matching your criteria.
+            No articles found.
         </div>
         {% endif %}
     </div>
+
+    <!-- Footer with Subscribe -->
+    <footer class="bg-light text-center text-lg-start mt-5 border-top">
+        <div class="container p-4">
+            <div class="row justify-content-center">
+                <div class="col-lg-6">
+                    <h5 class="text-uppercase mb-3">Subscribe to Daily Digest</h5>
+                    <p>Get the top tech news delivered to your inbox every morning.</p>
+                    <form id="subscribeForm" class="d-flex gap-2">
+                        <input type="email" id="emailInput" class="form-control" placeholder="Enter your email"
+                            required>
+                        <button type="submit" class="btn btn-primary">Subscribe</button>
+                    </form>
+                    <div id="subscribeMessage" class="mt-2 text-start"></div>
+                </div>
+            </div>
+        </div>
+        <div class="text-center p-3 bg-dark text-white">
+            © 2026 Tech News Scraper
+        </div>
+    </footer>
 
     <!-- Summary Modal -->
     <div class="modal fade" id="summaryModal" tabindex="-1" aria-hidden="true">
@@ -153,7 +221,8 @@
                         <p class="mt-2">Analyzing article...</p>
                     </div>
                     <div id="summaryContent" style="display: none;">
-                        <img id="summaryImage" src="" class="img-fluid mb-3 rounded" style="max-height: 300px; width: 100%; object-fit: cover; display: none;">
+                        <img id="summaryImage" src="" class="img-fluid mb-3 rounded"
+                            style="max-height: 300px; width: 100%; object-fit: cover; display: none;">
                         <h4 id="summaryTitle" class="mb-3"></h4>
                         <p id="summaryText" class="lead fs-6"></p>
                     </div>
@@ -169,10 +238,41 @@
         const scrapeForm = document.getElementById('scrapeForm');
         const loadingSpinner = document.getElementById('loadingSpinner');
 
+        // Subscribe Form
+        const subscribeForm = document.getElementById('subscribeForm');
+        const subscribeMessage = document.getElementById('subscribeMessage');
+
+        if (subscribeForm) {
+            subscribeForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const email = document.getElementById('emailInput').value;
+
+                try {
+                    const response = await fetch('/subscribe', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: email })
+                    });
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        subscribeMessage.innerHTML = `<span class="text-success">${data.message}</span>`;
+                        subscribeForm.reset();
+                    } else {
+                        subscribeMessage.innerHTML = `<span class="text-danger">${data.error}</span>`;
+                    }
+                } catch (error) {
+                    subscribeMessage.innerHTML = `<span class="text-danger">Error connecting to server.</span>`;
+                }
+            });
+        }
+
         // Show spinner on submit
-        scrapeForm.addEventListener('submit', () => {
-            loadingSpinner.style.display = 'flex';
-        });
+        if (scrapeForm) {
+            scrapeForm.addEventListener('submit', () => {
+                loadingSpinner.style.display = 'flex';
+            });
+        }
 
         // Check local storage
         if (localStorage.getItem('theme') === 'dark') {
@@ -204,34 +304,32 @@
             btn.addEventListener('click', async (e) => {
                 e.preventDefault();
                 const url = btn.dataset.url;
-                
+
                 // Reset and show modal
                 summaryLoader.style.display = 'block';
                 summaryContent.style.display = 'none';
                 summaryModal.show();
-                
+
                 try {
                     const response = await fetch('/summarize', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ url: url })
                     });
-                    
+
                     const data = await response.json();
-                    
+
                     if (response.ok) {
                         summaryTitle.textContent = data.title;
                         summaryText.textContent = data.summary || "No summary available.";
-                        
+
                         if (data.top_image) {
                             summaryImage.src = data.top_image;
                             summaryImage.style.display = 'block';
                         } else {
                             summaryImage.style.display = 'none';
                         }
-                        
+
                         summaryLoader.style.display = 'none';
                         summaryContent.style.display = 'block';
                     } else {
@@ -246,6 +344,32 @@
                 }
             });
         });
+
+        // Bookmark functionality
+        document.querySelectorAll('.bookmark-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const articleId = btn.dataset.id;
+                const icon = btn.querySelector('i');
+
+                try {
+                    const response = await fetch(`/bookmark/${articleId}`, { method: 'POST' });
+                    const data = await response.json();
+
+                    if (data.is_saved) {
+                        btn.classList.add('saved');
+                        icon.classList.remove('bi-star');
+                        icon.classList.add('bi-star-fill');
+                    } else {
+                        btn.classList.remove('saved');
+                        icon.classList.remove('bi-star-fill');
+                        icon.classList.add('bi-star');
+                    }
+                } catch (error) {
+                    console.error('Bookmark error:', error);
+                }
+            });
+        });
     </script>
 </body>
+
 </html>
