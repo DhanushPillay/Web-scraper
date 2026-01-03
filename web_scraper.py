@@ -192,14 +192,76 @@ class RedditScraper(BaseScraper):
         print(f"[Reddit] Done. Collected {len(self.articles)} articles.")
 
 
+class TheVergeScraper(BaseScraper):
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_url: str = "https://www.theverge.com/"
+
+    def scrape(self, num_pages: int = 1) -> None:
+        try:
+            response = requests.get(self.base_url, headers=self.headers)
+            if response.status_code != 200:
+                print(f"Failed to fetch {self.base_url}")
+                return
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+            # The Verge uses h2 for article titles in the feed
+            articles = soup.find_all('h2')
+
+            count = 0
+            for h2 in articles:
+                if count >= 15: # Limit to top 15 to avoid clutter
+                    break
+                
+                a_tag = h2.find('a')
+                if not a_tag:
+                    continue
+
+                title = a_tag.get_text().strip()
+                link = a_tag['href']
+                
+                # Fix relative URLs
+                if link.startswith('/'):
+                    link = f"https://www.theverge.com{link}"
+
+                # Try to find container to locate metadata
+                # Usually the h2 is inside a div or li which contains the author/time
+                container = h2.find_parent('div') 
+                if not container:
+                    continue
+                    
+                # Author (look for link with /authors/)
+                author_tag = container.find('a', href=lambda x: x and '/authors/' in x)
+                author = author_tag.get_text().strip() if author_tag else "The Verge Staff"
+
+                # Time (look for time tag)
+                time_tag = container.find('time')
+                time_str = time_tag.get_text().strip() if time_tag else "Recent"
+
+                self.articles.append({
+                    'title': title,
+                    'link': link,
+                    'score': 0, # No scores on Verge
+                    'author': author,
+                    'time': time_str,
+                    'comments': '0', # Hard to scrape comments count easily
+                    'source': 'The Verge'
+                })
+                count += 1
+                
+        except Exception as e:
+            print(f"Error scraping The Verge: {e}")
+
 class NewsAggregator:
     def __init__(self) -> None:
         self.scrapers: list[BaseScraper] = [
             HackerNewsScraper(),
             TechCrunchScraper(),
-            RedditScraper()
+            RedditScraper(),
+            TheVergeScraper()
         ]
         self.articles: list[dict] = []
+
 
     def scrape_all(self, hn_pages: int = 1) -> None:
         """Runs all scrapers in parallel."""

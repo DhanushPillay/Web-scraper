@@ -83,6 +83,7 @@
                             <option value="TechCrunch" {% if source=='TechCrunch' %}selected{% endif %}>TechCrunch
                             </option>
                             <option value="Reddit" {% if source=='Reddit' %}selected{% endif %}>Reddit</option>
+                            <option value="The Verge" {% if source=='The Verge' %}selected{% endif %}>The Verge</option>
                         </select>
                     </div>
                     <div class="col-md-3">
@@ -158,6 +159,8 @@
                                 <span class="badge bg-success">TC</span>
                                 {% elif article.source == 'Reddit' %}
                                 <span class="badge bg-danger">Reddit</span>
+                                {% elif article.source == 'The Verge' %}
+                                <span class="badge bg-dark" style="border: 1px solid white;">Verge</span>
                                 {% else %}
                                 <span class="badge bg-secondary">{{ article.source }}</span>
                                 {% endif %}
