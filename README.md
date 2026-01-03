@@ -1,24 +1,33 @@
-
-# Hacker News Web Scraper & Summarizer
+# Tech News Aggregator & Scraper
 
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
 ![Flask Version](https://img.shields.io/badge/flask-2.0%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
-This project is a full-featured Python application for scraping, filtering, viewing, and summarizing technology news from [Hacker News](https://news.ycombinator.com/). It offers both a modern web dashboard and a robust command-line interface (CLI).
+A full-featured Python application for aggregating, filtering, and viewing technology news from **5 major sources**: Hacker News, TechCrunch, Reddit, The Verge, and Ars Technica. Features a modern web dashboard with bookmarking, dark mode, and AI-powered article summarization.
 
 ## Features
 
-- **Multi-Page Scraping**: Efficiently collects stories from multiple pages.
-- **Rich Article Data**: Extracts headlines, scores, authors, timestamps, and comment counts.
-- **Smart Filtering & Sorting**: Filter by keyword; sort by score, comment count, or recency.
-- **Performance Caching**: 10-minute cache to minimize redundant requests and respect server load.
-- **Modern Web UI**:
-    - Responsive Bootstrap 5 design.
-    - Dark Mode support.
-    - AI-powered article summarization (popup modal).
-    - CSV Export.
-- **CLI Mode**: Quick terminal-based scraping and data export.
+### Multi-Source Aggregation
+- **Hacker News**: Top stories with scores and comments
+- **TechCrunch**: Latest tech industry news
+- **Reddit** (r/technology): Community-driven discussions
+- **The Verge**: Tech culture and reviews
+- **Ars Technica**: In-depth technical analysis
+
+### Core Functionality
+- **SQLite Database**: Persistent storage for all articles
+- **Bookmarking**: Save articles for later reading
+- **Smart Filtering**: Filter by source, keyword, or view saved articles only
+- **Sorting Options**: Sort by score, comments, or recency
+- **Email Digest**: Subscribe to daily news updates (skeleton implementation)
+
+### Modern Web Interface
+- Responsive Bootstrap 5 design
+- **Dark Mode** support with persistent preferences
+- AI-powered article summarization (popup modal)
+- CSV Export for data analysis
+- Source-specific badges (color-coded)
 
 ## Prerequisites
 
@@ -47,38 +56,58 @@ This project is a full-featured Python application for scraping, filtering, view
 
 ## Usage
 
-### 1. Web Interface (Recommended)
+### Web Interface (Recommended)
 
 1. Start the server:
    ```bash
    python app.py
    ```
 2. Open [http://127.0.0.1:5000/](http://127.0.0.1:5000/) in your browser.
-3. Use the dashboard to scrape, filter, summarize, and export news.
+3. Click **Refresh** to scrape articles from all sources.
+4. Use filters, bookmarks, and the summarize feature.
 
-### 2. Command Line Interface (CLI)
+### Command Line Interface (CLI)
 
-1. Run the script:
-   ```bash
-   python web_scraper.py
-   ```
-2. Follow the interactive prompts to scrape and manage data.
+Run the legacy scraper:
+```bash
+python web_scraper.py
+```
 
 ## Project Structure
 
-- **`web_scraper.py`**: The core logic. Handles HTML parsing (BeautifulSoup), HTTP requests, and data processing.
-- **`app.py`**: Flask application. Manages routes, API endpoints, caching, and the summarization feature.
-- **`templates/index.html`**: The frontend. A responsive HTML5/Bootstrap template.
-- **`tech_news.csv`**: generated output file for exported data.
+- **`web_scraper.py`**: Core scraping logic with `BaseScraper` pattern for each source
+- **`database.py`**: SQLite database management (articles, bookmarks)
+- **`app.py`**: Flask application with routes, API endpoints, and summarization
+- **`templates/index.html`**: Responsive web UI with dark mode and bookmark functionality
+- **`tech_news.db`**: SQLite database (auto-generated)
+
+## Database Schema
+
+```sql
+CREATE TABLE articles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    link TEXT UNIQUE NOT NULL,
+    score INTEGER DEFAULT 0,
+    author TEXT,
+    time_posted TEXT,
+    comments TEXT,
+    source TEXT,
+    created_at REAL,
+    is_saved INTEGER DEFAULT 0
+);
+```
 
 ## Troubleshooting
 
-- **`LookupError` (NLTK)**: If you see an error about missing NLTK resources, run `python -c "import nltk; nltk.download('punkt')"` in your terminal.
-- **Timeout/Connection Errors**: Hacker News may rate-limit aggressive scraping. The scraper includes a 1-second delay between pages to mitigate this.
+- **`LookupError` (NLTK)**: Run `python -c "import nltk; nltk.download('punkt')"` 
+- **Timeout/Connection Errors**: Scrapers include delays to respect rate limits
+- **Empty Results**: Some sources may temporarily block requests; try again later
 
-## Future Improvements
+## License
 
-- Add database support (SQLite/PostgreSQL) for long-term data storage.
-- Implement user accounts to save favorite articles.
-- Add "Sentiment Analysis" to the summary feature.
+MIT License - feel free to use and modify.
 
+## Contributing
+
+Pull requests are welcome! For major changes, please open an issue first.

@@ -252,13 +252,73 @@ class TheVergeScraper(BaseScraper):
         except Exception as e:
             print(f"Error scraping The Verge: {e}")
 
+class ArsTechnicaScraper(BaseScraper):
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_url: str = "https://arstechnica.com/"
+
+    def scrape(self, num_pages: int = 1) -> None:
+        try:
+            response = requests.get(self.base_url, headers=self.headers)
+            if response.status_code != 200:
+                print(f"Failed to fetch {self.base_url}")
+                return
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+            # Ars Technica uses h2 for article titles
+            articles = soup.find_all('h2')
+
+            count = 0
+            for h2 in articles:
+                if count >= 15:
+                    break
+                
+                a_tag = h2.find('a')
+                if not a_tag or not a_tag.get('href'):
+                    continue
+
+                link = a_tag['href']
+                # Skip if not an article link
+                if not link.startswith('https://arstechnica.com/'):
+                    continue
+
+                title = a_tag.get_text().strip()
+                
+                # Find the parent article container
+                container = h2.find_parent('article') or h2.find_parent('div')
+                if not container:
+                    continue
+
+                # Author - look for byline or author class
+                author_tag = container.find('a', href=lambda x: x and '/author/' in x) if container else None
+                author = author_tag.get_text().strip() if author_tag else "Ars Staff"
+
+                # Time
+                time_tag = container.find('time') if container else None
+                time_str = time_tag.get('datetime', time_tag.get_text()).strip() if time_tag else "Recent"
+
+                self.articles.append({
+                    'title': title,
+                    'link': link,
+                    'score': 0,
+                    'author': author,
+                    'time': time_str,
+                    'comments': '0',
+                    'source': 'Ars Technica'
+                })
+                count += 1
+                
+        except Exception as e:
+            print(f"Error scraping Ars Technica: {e}")
+
 class NewsAggregator:
     def __init__(self) -> None:
         self.scrapers: list[BaseScraper] = [
             HackerNewsScraper(),
             TechCrunchScraper(),
             RedditScraper(),
-            TheVergeScraper()
+            TheVergeScraper(),
+            ArsTechnicaScraper()
         ]
         self.articles: list[dict] = []
 

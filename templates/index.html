@@ -84,6 +84,8 @@
                             </option>
                             <option value="Reddit" {% if source=='Reddit' %}selected{% endif %}>Reddit</option>
                             <option value="The Verge" {% if source=='The Verge' %}selected{% endif %}>The Verge</option>
+                            <option value="Ars Technica" {% if source=='Ars Technica' %}selected{% endif %}>Ars Technica
+                            </option>
                         </select>
                     </div>
                     <div class="col-md-3">
@@ -161,6 +163,8 @@
                                 <span class="badge bg-danger">Reddit</span>
                                 {% elif article.source == 'The Verge' %}
                                 <span class="badge bg-dark" style="border: 1px solid white;">Verge</span>
+                                {% elif article.source == 'Ars Technica' %}
+                                <span class="badge" style="background-color: #ff4e00; color: white;">Ars</span>
                                 {% else %}
                                 <span class="badge bg-secondary">{{ article.source }}</span>
                                 {% endif %}
