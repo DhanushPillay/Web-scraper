@@ -65,6 +65,46 @@
             </div>
         </div>
 
+        <!-- Stats Dashboard -->
+        <div class="row g-3 mb-4" id="statsDashboard">
+            <div class="col-md-3">
+                <div class="card text-center shadow-sm">
+                    <div class="card-body">
+                        <i class="bi bi-file-earmark-text fs-2 text-primary"></i>
+                        <h3 class="mt-2 mb-0" id="totalArticles">-</h3>
+                        <p class="text-muted mb-0">Total Articles</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center shadow-sm">
+                    <div class="card-body">
+                        <i class="bi bi-calendar-check fs-2 text-success"></i>
+                        <h3 class="mt-2 mb-0" id="todayArticles">-</h3>
+                        <p class="text-muted mb-0">New Today</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center shadow-sm">
+                    <div class="card-body">
+                        <i class="bi bi-star-fill fs-2 text-warning"></i>
+                        <h3 class="mt-2 mb-0" id="savedArticles">-</h3>
+                        <p class="text-muted mb-0">Saved Articles</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center shadow-sm">
+                    <div class="card-body">
+                        <i class="bi bi-graph-up fs-2 text-info"></i>
+                        <h3 class="mt-2 mb-0" id="topSource">-</h3>
+                        <p class="text-muted mb-0">Top Source</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         {% if not showing_saved %}
         <div class="card p-4 shadow-sm">
             <form action="/" method="post" id="scrapeForm">
@@ -244,6 +284,34 @@
         const htmlElement = document.documentElement;
         const scrapeForm = document.getElementById('scrapeForm');
         const loadingSpinner = document.getElementById('loadingSpinner');
+
+        // Load Dashboard Stats
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+
+                document.getElementById('totalArticles').textContent = stats.total || 0;
+                document.getElementById('todayArticles').textContent = stats.today || 0;
+                document.getElementById('savedArticles').textContent = stats.saved || 0;
+
+                // Find top source
+                let topSource = '-';
+                let maxCount = 0;
+                for (const [source, count] of Object.entries(stats.by_source || {})) {
+                    if (count > maxCount) {
+                        maxCount = count;
+                        topSource = source;
+                    }
+                }
+                document.getElementById('topSource').textContent = topSource;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Load stats on page load
+        loadStats();
 
         // Subscribe Form
         const subscribeForm = document.getElementById('subscribeForm');

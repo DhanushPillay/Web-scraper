@@ -133,3 +133,35 @@ class Database:
         count = cursor.fetchone()[0]
         conn.close()
         return count
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Returns statistics about articles in the database."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Total articles
+        cursor.execute("SELECT COUNT(*) FROM articles")
+        total = cursor.fetchone()[0]
+        
+        # Articles added today (last 24 hours)
+        twenty_four_hours_ago = time.time() - (24 * 60 * 60)
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE created_at >= ?", (twenty_four_hours_ago,))
+        today = cursor.fetchone()[0]
+        
+        # Saved articles
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE is_saved = 1")
+        saved = cursor.fetchone()[0]
+        
+        # Breakdown by source
+        cursor.execute("SELECT source, COUNT(*) as count FROM articles GROUP BY source")
+        by_source_rows = cursor.fetchall()
+        by_source = {row['source']: row['count'] for row in by_source_rows}
+        
+        conn.close()
+        
+        return {
+            'total': total,
+            'today': today,
+            'saved': saved,
+            'by_source': by_source
+        }

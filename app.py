@@ -136,6 +136,12 @@ def subscribe() -> Response:
     print(f"New subscriber: {email}")
     return jsonify({'message': 'Subscribed successfully!'})
 
+@app.route('/api/stats')
+def api_stats() -> Response:
+    """API endpoint for dashboard statistics."""
+    stats = db.get_stats()
+    return jsonify(stats)
+
 @app.route('/summarize', methods=['POST'])
 def summarize() -> Response:
     """API endpoint to summarize a given URL."""
