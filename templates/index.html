@@ -478,14 +478,14 @@
                     <tbody>
                         {% for article in articles %}
                         <tr>
-                            <td class="text-center">
+                            <td class="text-center align-top">
                                 <button class="bookmark-btn {% if article.is_saved %}saved{% endif %}"
                                     data-id="{{ article.id }}" title="Bookmark">
                                     <i class="bi {% if article.is_saved %}bi-star-fill{% else %}bi-star{% endif %}"></i>
                                 </button>
                             </td>
-                            <td><span class="badge bg-secondary">{{ article.score }}</span></td>
-                            <td>
+                            <td class="align-top"><span class="badge bg-secondary">{{ article.score }}</span></td>
+                            <td class="align-top">
                                 {% if article.source == 'Hacker News' %}
                                 <span class="badge bg-warning text-dark">HN</span>
                                 {% elif article.source == 'TechCrunch' %}
@@ -500,12 +500,35 @@
                                 <span class="badge bg-secondary">{{ article.source }}</span>
                                 {% endif %}
                             </td>
-                            <td><a href="{{ article.link }}" target="_blank" class="text-decoration-none">{{
-                                    article.title }}</a></td>
-                            <td>{{ article.author }}</td>
-                            <td>{{ article.time }}</td>
-                            <td>{{ article.comments }}</td>
                             <td>
+                                <div>
+                                    <a href="{{ article.link }}" target="_blank" class="text-decoration-none fw-bold">{{
+                                        article.title }}</a>
+                                </div>
+
+                                {% if article.related_articles %}
+                                <div class="mt-2 ms-3 border-start border-3 ps-2">
+                                    <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Related
+                                        Coverage</small>
+                                    <ul class="list-unstyled mb-0 mt-1">
+                                        {% for related in article.related_articles %}
+                                        <li class="mb-1">
+                                            <span class="badge bg-light text-dark border me-1"
+                                                style="font-size: 0.65em;">{{ related.source }}</span>
+                                            <a href="{{ related.link }}" target="_blank"
+                                                class="text-decoration-none text-secondary" style="font-size: 0.85rem;">
+                                                {{ related.title }}
+                                            </a>
+                                        </li>
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                                {% endif %}
+                            </td>
+                            <td class="align-top text-nowrap">{{ article.author }}</td>
+                            <td class="align-top text-nowrap">{{ article.time }}</td>
+                            <td class="align-top">{{ article.comments }}</td>
+                            <td class="align-top">
                                 <button class="btn btn-sm btn-outline-info summarize-btn"
                                     data-url="{{ article.link }}">Summarize</button>
                             </td>

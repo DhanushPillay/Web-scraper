@@ -109,7 +109,12 @@ def index() -> str:
          articles = sorted(articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
     # default or 'newest' uses DB order (created_at DESC)
 
-    return render_template('index.html', articles=articles, pages=pages, keyword=keyword, sort_by=sort_by, source=source_filter)
+    # Apply Clustering
+    from utils.cluster_utils import NewsClusterer
+    clusterer = NewsClusterer(similarity_threshold=0.2)
+    clustered_articles = clusterer.cluster_articles(articles)
+
+    return render_template('index.html', articles=clustered_articles, pages=pages, keyword=keyword, sort_by=sort_by, source=source_filter)
 
 @app.route('/saved')
 def saved_articles() -> str:
