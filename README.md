@@ -127,7 +127,7 @@ CREATE TABLE articles (
 - **Scraping**: BeautifulSoup4, Requests
 - **AI/NLP**: Newspaper3k, NLTK
 - **Frontend**: Bootstrap 5, Inter Font, Vanilla JavaScript
-- **Data**: Pandas (for CSV export)
+- **Data**: SQLite3, CSV (built-in)
 
 ## Troubleshooting
 
