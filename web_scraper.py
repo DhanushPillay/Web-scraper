@@ -1,17 +1,43 @@
+"""
+Web Scraper Module — Tech News Aggregator
+Uses RSS feeds where available for speed, falls back to HTML scraping.
+Includes caching, health tracking, and retry logic.
+"""
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
+import feedparser
 import csv
 import time
-import sys
+import logging
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
 
 class BaseScraper(ABC):
     """Abstract base class for all news scrapers."""
-    
+
     def __init__(self) -> None:
         self.articles: list[dict] = []
-        self.display_fields: list[str] = ['score', 'title', 'source']
+        self.headers: dict[str, str] = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        # Requests session with automatic retries on transient failures
+        self.session = requests.Session()
+        retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503])
+        self.session.mount('https://', HTTPAdapter(max_retries=retries))
+        self.session.mount('http://', HTTPAdapter(max_retries=retries))
+        self.session.headers.update(self.headers)
+
+        # Health tracking
+        self.last_scrape_time: float = 0
+        self.last_status: str = "idle"  # idle, ok, error
+        self.last_error: str = ""
+        self.scrape_duration: float = 0
 
     @abstractmethod
     def scrape(self, num_pages: int = 1) -> None:
@@ -20,39 +46,106 @@ class BaseScraper(ABC):
     def get_articles(self) -> list[dict]:
         return self.articles
 
+    def get_health(self) -> dict:
+        return {
+            'source': self.__class__.__name__.replace('Scraper', ''),
+            'status': self.last_status,
+            'last_scrape': self.last_scrape_time,
+            'duration': round(self.scrape_duration, 2),
+            'article_count': len(self.articles),
+            'last_error': self.last_error
+        }
+
+
 class HackerNewsScraper(BaseScraper):
-    """Scraper for Hacker News."""
-    
+    """Scraper for Hacker News using RSS feed (hnrss.org) for speed."""
+
     def __init__(self) -> None:
         super().__init__()
-        self.base_url: str = "https://news.ycombinator.com/news"
+        # hnrss.org provides a fast, reliable RSS feed for HN
+        self.feed_url: str = "https://hnrss.org/frontpage?count=30"
+        self.fallback_url: str = "https://news.ycombinator.com/news"
 
-    def scrape(self, num_pages: int = 3) -> None:
-        print(f"[HN] Starting scrape for {num_pages} pages...")
-        for p in range(1, num_pages + 1):
-            url = f"{self.base_url}?p={p}"
-            html = self._fetch_url(url)
-            if html:
-                self._parse_html(html)
-            if p < num_pages:
-                time.sleep(1)
-        print(f"[HN] Done. Collected {len(self.articles)} articles.")
-
-    def _fetch_url(self, url: str) -> str | None:
+    def scrape(self, num_pages: int = 1) -> None:
+        start = time.time()
+        self.articles = []
+        logger.info("[HN] Starting RSS scrape...")
         try:
-            headers = {'User-Agent': 'Python TechScraper Project/2.0'}
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                return response.text
-            return None
+            # Try RSS first (much faster)
+            feed = feedparser.parse(self.feed_url)
+            if feed.entries:
+                for entry in feed.entries:
+                    # Extract comments count from the description if available
+                    comments = "0"
+                    if hasattr(entry, 'comments') and entry.comments:
+                        # comments URL contains item ID
+                        pass
+
+                    score = 0
+                    # hnrss includes score in description
+                    if hasattr(entry, 'description'):
+                        desc = entry.description or ""
+                        if 'Points:' in desc:
+                            try:
+                                score = int(desc.split('Points:')[1].split('<')[0].strip())
+                            except (ValueError, IndexError):
+                                pass
+                        if 'Comments:' in desc:
+                            try:
+                                comments = desc.split('Comments:')[1].split('<')[0].strip()
+                            except (ValueError, IndexError):
+                                comments = "0"
+
+                    time_posted = "Recent"
+                    if hasattr(entry, 'published'):
+                        time_posted = entry.published
+
+                    author = "Unknown"
+                    if hasattr(entry, 'author'):
+                        author = entry.author
+
+                    self.articles.append({
+                        'title': entry.title,
+                        'link': entry.link,
+                        'score': score,
+                        'author': author,
+                        'time': time_posted,
+                        'comments': str(comments),
+                        'source': 'Hacker News'
+                    })
+                self.last_status = "ok"
+            else:
+                # Fallback to HTML scraping if RSS fails
+                logger.warning("[HN] RSS empty, falling back to HTML scrape")
+                self._scrape_html(num_pages)
         except Exception as e:
-            print(f"[HN] Error fetching {url}: {e}")
-            return None
+            logger.warning(f"[HN] RSS failed ({e}), falling back to HTML")
+            self._scrape_html(num_pages)
+
+        self.scrape_duration = time.time() - start
+        self.last_scrape_time = time.time()
+        logger.info(f"[HN] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+
+    def _scrape_html(self, num_pages: int) -> None:
+        """Fallback HTML scraper for Hacker News."""
+        try:
+            for p in range(1, num_pages + 1):
+                url = f"{self.fallback_url}?p={p}"
+                response = self.session.get(url, timeout=10)
+                if response.status_code == 200:
+                    self._parse_html(response.text)
+                if p < num_pages:
+                    time.sleep(1)
+            self.last_status = "ok"
+        except requests.RequestException as e:
+            self.last_status = "error"
+            self.last_error = str(e)
+            logger.warning(f"[HN] HTML fallback failed: {e}")
 
     def _parse_html(self, html_content: str) -> None:
         soup = BeautifulSoup(html_content, 'html.parser')
         story_rows = soup.find_all('tr', class_='athing')
-        
+
         for row in story_rows:
             try:
                 title_element = row.find('span', class_='titleline').find('a')
@@ -60,10 +153,10 @@ class HackerNewsScraper(BaseScraper):
                 link = title_element['href']
                 if not link.startswith('http'):
                     link = f"https://news.ycombinator.com/{link}"
-                
+
                 metadata_row = row.find_next_sibling('tr')
                 subtext = metadata_row.find('td', class_='subtext')
-                
+
                 score = 0
                 author = "Unknown"
                 time_posted = "Unknown"
@@ -73,20 +166,21 @@ class HackerNewsScraper(BaseScraper):
                     score_elem = subtext.find('span', class_='score')
                     if score_elem:
                         score = int(score_elem.text.split()[0])
-                    
+
                     author_elem = subtext.find('a', class_='hnuser')
                     if author_elem:
                         author = author_elem.text
-                        
+
                     age_elem = subtext.find('span', class_='age')
                     if age_elem:
                         time_posted = age_elem.text
-                        
+
                     links = subtext.find_all('a')
                     for l in links:
                         if 'comment' in l.text:
                             comments = l.text.split()[0]
-                            if comments == 'discuss': comments = "0"
+                            if comments == 'discuss':
+                                comments = "0"
                             break
 
                 self.articles.append({
@@ -98,84 +192,69 @@ class HackerNewsScraper(BaseScraper):
                     'comments': comments,
                     'source': 'Hacker News'
                 })
-            except AttributeError:
+            except (AttributeError, ValueError):
                 continue
 
-    def get_top_comment(self, article_link: str) -> str | None:
-        """Fetches the top comment for a given HN story link."""
-        # Note: Logic to find the specific item ID from the link might be tricky if it's external
-        # But if we have the 'comments' link (from subtext), we can use that.
-        # For now, let's assume we don't have the internal ID easily mapped unless we saved it.
-        # TODO: Enhanced scraper could save the 'item?id=...' link as the 'comments_link'
-        return None
 
 class TechCrunchScraper(BaseScraper):
-    """Scraper for TechCrunch."""
-    
+    """Scraper for TechCrunch using RSS feed."""
+
     def __init__(self) -> None:
         super().__init__()
-        self.base_url: str = "https://techcrunch.com/"
+        self.feed_url: str = "https://techcrunch.com/feed/"
 
     def scrape(self, num_pages: int = 1) -> None:
-        # TechCrunch is harder to verify for pagination without JS for some layouts,
-        # but the main page has latest stories.
-        # simpler implementation: scrape main page only for now or use /category/technology/page/x
-        
-        print(f"[TC] Starting scrape...")
-        # Scraping page 1 only for stability in this demo version
-        url = self.base_url
+        start = time.time()
+        self.articles = []
+        logger.info("[TC] Starting RSS scrape...")
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                # TechCrunch markup changes often, targeting standard article headers
-                # Looking for h2 or h3 with links
-                articles = soup.find_all('h3', class_='loop-card__title')
-                if not articles:
-                    articles = soup.select('.post-block__title a') # Backup selector
+            feed = feedparser.parse(self.feed_url)
+            for entry in feed.entries[:25]:
+                author = "TechCrunch"
+                if hasattr(entry, 'author'):
+                    author = entry.author
 
-                for art in articles:
-                    a_tag = art.find('a') if art.name != 'a' else art
-                    if not a_tag: continue
-                    
-                    title = a_tag.text.strip()
-                    link = a_tag['href']
-                    
-                    # Try to find author/time if possible (complex on TC without specific selectors)
-                    # keeping it simple
-                    
-                    self.articles.append({
-                        'title': title,
-                        'link': link,
-                        'score': 0, # TC doesn't have scores
-                        'author': 'TechCrunch',
-                        'time': 'Recent',
-                        'comments': '0',
-                        'source': 'TechCrunch'
-                    })
+                time_posted = "Recent"
+                if hasattr(entry, 'published'):
+                    time_posted = entry.published
+
+                self.articles.append({
+                    'title': entry.title,
+                    'link': entry.link,
+                    'score': 0,
+                    'author': author,
+                    'time': time_posted,
+                    'comments': '0',
+                    'source': 'TechCrunch'
+                })
+            self.last_status = "ok"
         except Exception as e:
-            print(f"[TC] Error: {e}")
-        print(f"[TC] Done. Collected {len(self.articles)} articles.")
+            self.last_status = "error"
+            self.last_error = str(e)
+            logger.warning(f"[TC] Error: {e}")
+
+        self.scrape_duration = time.time() - start
+        self.last_scrape_time = time.time()
+        logger.info(f"[TC] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+
 
 class RedditScraper(BaseScraper):
-    """Scraper for r/technology using JSON API."""
-    
+    """Scraper for r/technology using JSON API (already fast)."""
+
     def __init__(self) -> None:
         super().__init__()
         self.base_url: str = "https://www.reddit.com/r/technology/top.json?t=day&limit=25"
 
     def scrape(self, num_pages: int = 1) -> None:
-        print(f"[Reddit] Starting scrape...")
+        start = time.time()
+        self.articles = []
+        logger.info("[Reddit] Starting JSON scrape...")
         try:
-            headers = {'User-Agent': 'Python TechScraper Project/2.0'}
-            # num_pages calculation is rough for JSON API, just doing one batch
-            url = self.base_url
-            response = requests.get(url, headers=headers, timeout=10)
+            response = self.session.get(self.base_url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 children = data.get('data', {}).get('children', [])
-                
+
                 for post in children:
                     p_data = post.get('data', {})
                     self.articles.append({
@@ -183,135 +262,110 @@ class RedditScraper(BaseScraper):
                         'link': p_data.get('url'),
                         'score': p_data.get('score', 0),
                         'author': p_data.get('author'),
-                        'time': 'Today', # simplifying
+                        'time': 'Today',
                         'comments': str(p_data.get('num_comments', 0)),
                         'source': 'Reddit'
                     })
-        except Exception as e:
-            print(f"[Reddit] Error: {e}")
-        print(f"[Reddit] Done. Collected {len(self.articles)} articles.")
+            self.last_status = "ok"
+        except requests.RequestException as e:
+            self.last_status = "error"
+            self.last_error = str(e)
+            logger.warning(f"[Reddit] Error: {e}")
+
+        self.scrape_duration = time.time() - start
+        self.last_scrape_time = time.time()
+        logger.info(f"[Reddit] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
 
 
 class TheVergeScraper(BaseScraper):
+    """Scraper for The Verge using RSS feed."""
+
     def __init__(self) -> None:
         super().__init__()
-        self.base_url: str = "https://www.theverge.com/"
+        self.feed_url: str = "https://www.theverge.com/rss/index.xml"
 
     def scrape(self, num_pages: int = 1) -> None:
+        start = time.time()
+        self.articles = []
+        logger.info("[Verge] Starting RSS scrape...")
         try:
-            response = requests.get(self.base_url, headers=self.headers)
-            if response.status_code != 200:
-                print(f"Failed to fetch {self.base_url}")
-                return
+            feed = feedparser.parse(self.feed_url)
+            for entry in feed.entries[:15]:
+                author = "The Verge Staff"
+                if hasattr(entry, 'author'):
+                    author = entry.author
 
-            soup = BeautifulSoup(response.text, 'html.parser')
-            # The Verge uses h2 for article titles in the feed
-            articles = soup.find_all('h2')
-
-            count = 0
-            for h2 in articles:
-                if count >= 15: # Limit to top 15 to avoid clutter
-                    break
-                
-                a_tag = h2.find('a')
-                if not a_tag:
-                    continue
-
-                title = a_tag.get_text().strip()
-                link = a_tag['href']
-                
-                # Fix relative URLs
-                if link.startswith('/'):
-                    link = f"https://www.theverge.com{link}"
-
-                # Try to find container to locate metadata
-                # Usually the h2 is inside a div or li which contains the author/time
-                container = h2.find_parent('div') 
-                if not container:
-                    continue
-                    
-                # Author (look for link with /authors/)
-                author_tag = container.find('a', href=lambda x: x and '/authors/' in x)
-                author = author_tag.get_text().strip() if author_tag else "The Verge Staff"
-
-                # Time (look for time tag)
-                time_tag = container.find('time')
-                time_str = time_tag.get_text().strip() if time_tag else "Recent"
+                time_posted = "Recent"
+                if hasattr(entry, 'published'):
+                    time_posted = entry.published
 
                 self.articles.append({
-                    'title': title,
-                    'link': link,
-                    'score': 0, # No scores on Verge
-                    'author': author,
-                    'time': time_str,
-                    'comments': '0', # Hard to scrape comments count easily
-                    'source': 'The Verge'
-                })
-                count += 1
-                
-        except Exception as e:
-            print(f"Error scraping The Verge: {e}")
-
-class ArsTechnicaScraper(BaseScraper):
-    def __init__(self) -> None:
-        super().__init__()
-        self.base_url: str = "https://arstechnica.com/"
-
-    def scrape(self, num_pages: int = 1) -> None:
-        try:
-            response = requests.get(self.base_url, headers=self.headers)
-            if response.status_code != 200:
-                print(f"Failed to fetch {self.base_url}")
-                return
-
-            soup = BeautifulSoup(response.text, 'html.parser')
-            # Ars Technica uses h2 for article titles
-            articles = soup.find_all('h2')
-
-            count = 0
-            for h2 in articles:
-                if count >= 15:
-                    break
-                
-                a_tag = h2.find('a')
-                if not a_tag or not a_tag.get('href'):
-                    continue
-
-                link = a_tag['href']
-                # Skip if not an article link
-                if not link.startswith('https://arstechnica.com/'):
-                    continue
-
-                title = a_tag.get_text().strip()
-                
-                # Find the parent article container
-                container = h2.find_parent('article') or h2.find_parent('div')
-                if not container:
-                    continue
-
-                # Author - look for byline or author class
-                author_tag = container.find('a', href=lambda x: x and '/author/' in x) if container else None
-                author = author_tag.get_text().strip() if author_tag else "Ars Staff"
-
-                # Time
-                time_tag = container.find('time') if container else None
-                time_str = time_tag.get('datetime', time_tag.get_text()).strip() if time_tag else "Recent"
-
-                self.articles.append({
-                    'title': title,
-                    'link': link,
+                    'title': entry.title,
+                    'link': entry.link,
                     'score': 0,
                     'author': author,
-                    'time': time_str,
+                    'time': time_posted,
+                    'comments': '0',
+                    'source': 'The Verge'
+                })
+            self.last_status = "ok"
+        except Exception as e:
+            self.last_status = "error"
+            self.last_error = str(e)
+            logger.warning(f"[Verge] Error: {e}")
+
+        self.scrape_duration = time.time() - start
+        self.last_scrape_time = time.time()
+        logger.info(f"[Verge] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+
+
+class ArsTechnicaScraper(BaseScraper):
+    """Scraper for Ars Technica using RSS feed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.feed_url: str = "https://feeds.arstechnica.com/arstechnica/index"
+
+    def scrape(self, num_pages: int = 1) -> None:
+        start = time.time()
+        self.articles = []
+        logger.info("[Ars] Starting RSS scrape...")
+        try:
+            feed = feedparser.parse(self.feed_url)
+            for entry in feed.entries[:15]:
+                author = "Ars Staff"
+                if hasattr(entry, 'author'):
+                    author = entry.author
+
+                time_posted = "Recent"
+                if hasattr(entry, 'published'):
+                    time_posted = entry.published
+
+                self.articles.append({
+                    'title': entry.title,
+                    'link': entry.link,
+                    'score': 0,
+                    'author': author,
+                    'time': time_posted,
                     'comments': '0',
                     'source': 'Ars Technica'
                 })
-                count += 1
-                
+            self.last_status = "ok"
         except Exception as e:
-            print(f"Error scraping Ars Technica: {e}")
+            self.last_status = "error"
+            self.last_error = str(e)
+            logger.warning(f"[Ars] Error: {e}")
+
+        self.scrape_duration = time.time() - start
+        self.last_scrape_time = time.time()
+        logger.info(f"[Ars] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+
 
 class NewsAggregator:
+    """Aggregates articles from all scrapers with caching and health tracking."""
+
+    CACHE_TTL = 300  # 5 minutes
+
     def __init__(self) -> None:
         self.scrapers: list[BaseScraper] = [
             HackerNewsScraper(),
@@ -321,59 +375,79 @@ class NewsAggregator:
             ArsTechnicaScraper()
         ]
         self.articles: list[dict] = []
+        self._last_scrape_time: float = 0
 
+    def scrape_all(self, hn_pages: int = 1, force: bool = False) -> None:
+        """Runs all scrapers in parallel. Skips if cache is still valid."""
+        # Cache check — avoid re-scraping if data is fresh
+        if not force and self.articles and (time.time() - self._last_scrape_time) < self.CACHE_TTL:
+            logger.info(f"Cache still valid ({int(self.CACHE_TTL - (time.time() - self._last_scrape_time))}s remaining). Skipping scrape.")
+            return
 
-    def scrape_all(self, hn_pages: int = 1) -> None:
-        """Runs all scrapers in parallel."""
         self.articles = []
-        
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            # HN gets variable pages, others get 1 for now
-            executor.submit(self.scrapers[0].scrape, hn_pages)
-            executor.submit(self.scrapers[1].scrape, 1)
-            executor.submit(self.scrapers[2].scrape, 1) # Reddit
-            
-        # Collect results
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for scraper in self.scrapers:
+                pages = hn_pages if isinstance(scraper, HackerNewsScraper) else 1
+                futures.append(executor.submit(scraper.scrape, pages))
+
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Scraper thread failed: {e}")
+
+        # Collect results from all scrapers
         for scraper in self.scrapers:
             self.articles.extend(scraper.get_articles())
-            
+
+        self._last_scrape_time = time.time()
+        logger.info(f"Total articles scraped: {len(self.articles)}")
+
     def get_articles(self) -> list[dict]:
         return self.articles
 
+    def get_health(self) -> list[dict]:
+        """Returns health status of all scrapers."""
+        return [s.get_health() for s in self.scrapers]
+
     def filter_by_keyword(self, articles: list[dict], keyword: str) -> list[dict]:
-        if not keyword: return articles
+        if not keyword:
+            return articles
         return [art for art in articles if keyword.lower() in art['title'].lower()]
 
     def save_to_csv(self, filename: str = "tech_news.csv") -> None:
         if not self.articles:
-            print("No data to save.")
+            logger.info("No data to save.")
             return
-
         try:
             with open(filename, mode='w', newline='', encoding='utf-8') as file:
                 writer = csv.DictWriter(file, fieldnames=["title", "score", "link", "author", "time", "comments", "source"])
                 writer.writeheader()
                 writer.writerows(self.articles)
-            print(f"Data successfully saved to {filename}")
-        except Exception as e:
-            print(f"Error saving file: {e}")
+            logger.info(f"Data successfully saved to {filename}")
+        except (IOError, OSError) as e:
+            logger.error(f"Error saving file: {e}")
+
 
 # Legacy support for main execution
 def main() -> None:
+    logging.basicConfig(level=logging.INFO)
     agg = NewsAggregator()
     print("Scraping all sources...")
     agg.scrape_all(hn_pages=2)
-    
-    # Sort by score for display
+
     sorted_arts = sorted(agg.articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
-    
+
     print(f"\nTotal articles: {len(sorted_arts)}")
     print("-" * 80)
     print(f"{'SOURCE':<12} | {'SCORE':<5} | {'TITLE'}")
     print("-" * 80)
-    
+
     for art in sorted_arts[:20]:
         print(f"{art['source'][:12]:<12} | {str(art['score']):<5} | {art['title'][:60]}")
+
 
 if __name__ == "__main__":
     main()
