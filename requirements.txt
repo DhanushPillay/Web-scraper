@@ -1,6 +1,9 @@
-flask
-requests
-beautifulsoup4
-newspaper3k
-nltk
-lxml_html_clean
+flask==3.0.3
+requests==2.32.3
+beautifulsoup4==4.12.3
+newspaper3k==0.2.8
+nltk==3.9.1
+lxml_html_clean==0.4.1
+urllib3==2.3.0
+feedparser==6.0.11
+apscheduler==3.10.4
