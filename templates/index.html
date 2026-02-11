@@ -1,763 +1,1286 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hacker News Scraper</title>
+    <meta name="description"
+        content="Tech News Aggregator — Real-time news from Hacker News, TechCrunch, Reddit, The Verge, and Ars Technica">
+    <title>Tech News Aggregator</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#6c5ce7">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        :root {
+            --primary: #6c5ce7;
+            --primary-glow: rgba(108, 92, 231, 0.3);
+            --accent: #00cec9;
+            --bg-dark: #0a0a1a;
+            --bg-card: #12122a;
+            --bg-surface: #1a1a3e;
+            --text-primary: #e8e8f0;
+            --text-secondary: #8888aa;
+            --border: rgba(255, 255, 255, 0.08);
+            --gradient-1: linear-gradient(135deg, #6c5ce7, #a855f7);
+            --gradient-2: linear-gradient(135deg, #00cec9, #00b894);
+            --gradient-3: linear-gradient(135deg, #fd79a8, #e17055);
+        }
 
         * {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Inter', sans-serif;
         }
 
         body {
-            background: #ffffff;
-            color: #1f2937;
-            font-size: 14px;
-            padding: 0;
-            margin: 0;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
         }
 
-        [data-bs-theme="dark"] body {
-            background: #111827;
-            color: #f9fafb;
+        /* Animated background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background:
+                radial-gradient(ellipse at 20% 50%, rgba(108, 92, 231, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(0, 206, 201, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 80%, rgba(253, 121, 168, 0.05) 0%, transparent 50%);
+            z-index: -1;
         }
 
-        .container {
-            max-width: 1400px;
-            padding: 2rem 1.5rem;
+        .navbar-custom {
+            background: rgba(10, 10, 26, 0.9);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            padding: 0.5rem 0;
         }
 
-        /* Header */
-        h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
-            color: #111827;
-            margin: 0;
-        }
-
-        [data-bs-theme="dark"] h1 {
-            color: #f9fafb;
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.3rem;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
         /* Stats Cards */
-        #statsDashboard .card {
-            background: #f9fafb;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 1.5rem;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
         }
 
-        #statsDashboard .card:hover {
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1rem;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 0 20px var(--primary-glow);
             transform: translateY(-2px);
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
         }
 
-        [data-bs-theme="dark"] #statsDashboard .card {
-            background: #1f2937;
-            border-color: #374151;
-        }
-
-        #statsDashboard h3 {
-            font-size: 2rem;
+        .stat-value {
+            font-size: 1.6rem;
             font-weight: 700;
-            color: #111827;
-            margin: 0.5rem 0 0 0;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
-        [data-bs-theme="dark"] #statsDashboard h3 {
-            color: #f9fafb;
-        }
-
-        #statsDashboard .text-muted {
+        .stat-label {
             font-size: 0.75rem;
-            font-weight: 500;
+            color: var(--text-secondary);
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            color: #6b7280;
-        }
-
-        #statsDashboard i {
-            font-size: 1.5rem;
-            color: #9ca3af;
         }
 
         /* Cards */
-        .card {
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        .glass-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.25rem;
+            margin-bottom: 1rem;
+            transition: all 0.3s ease;
         }
 
-        [data-bs-theme="dark"] .card {
-            background: #1f2937;
-            border-color: #374151;
+        .glass-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 4px 24px rgba(108, 92, 231, 0.15);
         }
 
-        /* Buttons */
-        .btn {
-            font-weight: 500;
-            font-size: 0.875rem;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
+        /* Article rows */
+        .article-row {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
+            margin-bottom: 0.5rem;
             transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
-        .btn-outline-primary {
-            border-color: #d1d5db;
-            color: #374151;
-            background: #ffffff;
+        .article-row:hover {
+            border-color: var(--primary);
+            background: var(--bg-surface);
         }
 
-        .btn-outline-primary:hover,
-        .btn-outline-primary.active {
-            background: #f3f4f6;
-            border-color: #9ca3af;
-            color: #111827;
+        .article-row.is-read {
+            opacity: 0.6;
         }
 
-        [data-bs-theme="dark"] .btn-outline-primary {
-            border-color: #4b5563;
-            color: #d1d5db;
-            background: #1f2937;
+        .article-title {
+            flex: 1;
         }
 
-        [data-bs-theme="dark"] .btn-outline-primary:hover,
-        [data-bs-theme="dark"] .btn-outline-primary.active {
-            background: #374151;
-            border-color: #6b7280;
-        }
-
-        .btn-outline-warning {
-            border-color: #fbbf24;
-            color: #f59e0b;
-        }
-
-        .btn-outline-warning:hover,
-        .btn-outline-warning.active {
-            background: #fef3c7;
-            border-color: #f59e0b;
-            color: #f59e0b;
-        }
-
-        .btn-outline-secondary {
-            border-color: #d1d5db;
-            color: #6b7280;
-        }
-
-        .btn-outline-secondary:hover {
-            background: #f3f4f6;
-            border-color: #9ca3af;
-            color: #374151;
-        }
-
-        .btn-primary {
-            background: #111827;
-            border-color: #111827;
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #1f2937;
-            border-color: #1f2937;
-        }
-
-        /* Forms */
-        .form-control,
-        .form-select {
-            font-size: 0.875rem;
-            padding: 0.625rem 0.875rem;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            background: #ffffff;
-        }
-
-        .form-control:focus,
-        .form-select:focus {
-            border-color: #9ca3af;
-            box-shadow: 0 0 0 3px rgba(156, 163, 175, 0.1);
-        }
-
-        [data-bs-theme="dark"] .form-control,
-        [data-bs-theme="dark"] .form-select {
-            background: #1f2937;
-            border-color: #4b5563;
-            color: #f9fafb;
-        }
-
-        /* Table */
-        .table {
-            font-size: 0.875rem;
-            background: #ffffff;
-        }
-
-        [data-bs-theme="dark"] .table {
-            background: #1f2937;
-        }
-
-        .table thead th {
-            background: #f9fafb;
-            color: #6b7280;
-            font-weight: 600;
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            padding: 0.875rem 1rem;
-            border-bottom: 1px solid #e5e7eb;
-        }
-
-        [data-bs-theme="dark"] .table thead th {
-            background: #111827;
-            color: #9ca3af;
-            border-bottom-color: #374151;
-        }
-
-        .table tbody tr {
-            border-bottom: 1px solid #f3f4f6;
-            transition: background 0.15s ease;
-        }
-
-        [data-bs-theme="dark"] .table tbody tr {
-            border-bottom-color: #374151;
-        }
-
-        .table tbody tr:hover {
-            background: #f9fafb;
-        }
-
-        [data-bs-theme="dark"] .table tbody tr:hover {
-            background: #111827;
-        }
-
-        .table tbody td {
-            padding: 1rem;
-            vertical-align: middle;
-            color: #374151;
-        }
-
-        [data-bs-theme="dark"] .table tbody td {
-            color: #d1d5db;
-        }
-
-        .table a {
-            color: #111827;
+        .article-title a {
+            color: var(--text-primary);
             text-decoration: none;
             font-weight: 500;
+            font-size: 0.9rem;
         }
 
-        .table a:hover {
-            color: #000000;
-            text-decoration: underline;
+        .article-title a:hover {
+            color: var(--primary);
         }
 
-        [data-bs-theme="dark"] .table a {
-            color: #f9fafb;
-        }
-
-        [data-bs-theme="dark"] .table a:hover {
-            color: #ffffff;
+        .article-meta {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-shrink: 0;
         }
 
         /* Badges */
-        .badge {
-            font-weight: 500;
-            font-size: 0.75rem;
-            padding: 0.25rem 0.625rem;
+        .badge-source {
+            font-size: 0.65rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .badge-hn {
+            background: #ff6600;
+            color: #fff;
+        }
+
+        .badge-tc {
+            background: #0a9e28;
+            color: #fff;
+        }
+
+        .badge-reddit {
+            background: #ff4500;
+            color: #fff;
+        }
+
+        .badge-verge {
+            background: #e6007a;
+            color: #fff;
+        }
+
+        .badge-ars {
+            background: #ff7e00;
+            color: #fff;
+        }
+
+        .badge-age {
+            font-size: 0.6rem;
+            padding: 0.15rem 0.4rem;
             border-radius: 4px;
         }
 
-        /* Bookmark */
-        .bookmark-btn {
+        .age-fresh {
+            background: rgba(0, 206, 201, 0.2);
+            color: #00cec9;
+        }
+
+        .age-recent {
+            background: rgba(253, 203, 110, 0.2);
+            color: #fdcb6e;
+        }
+
+        .age-old {
+            background: rgba(136, 136, 170, 0.2);
+            color: #8888aa;
+        }
+
+        .badge-sentiment {
+            font-size: 0.6rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+        }
+
+        .sentiment-positive {
+            background: rgba(0, 184, 148, 0.2);
+            color: #00b894;
+        }
+
+        .sentiment-negative {
+            background: rgba(214, 48, 49, 0.2);
+            color: #d63031;
+        }
+
+        .sentiment-neutral {
+            background: rgba(136, 136, 170, 0.15);
+            color: #8888aa;
+        }
+
+        .badge-category {
+            font-size: 0.6rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            background: rgba(108, 92, 231, 0.15);
+            color: #a29bfe;
+        }
+
+        /* Score pill */
+        .score-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.2rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        /* Action buttons */
+        .btn-icon {
             background: none;
             border: none;
+            color: var(--text-secondary);
+            padding: 0.25rem;
             cursor: pointer;
-            color: #d1d5db;
-            font-size: 1rem;
-            transition: all 0.2s ease;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            border-radius: 6px;
         }
 
-        .bookmark-btn:hover {
-            color: #fbbf24;
+        .btn-icon:hover {
+            color: var(--primary);
+            background: rgba(108, 92, 231, 0.1);
         }
 
-        .bookmark-btn.saved {
-            color: #fbbf24;
+        .btn-icon.active {
+            color: #fdcb6e;
         }
 
-        /* Loading */
-        .spinner-overlay {
+        .btn-icon.read-active {
+            color: var(--accent);
+        }
+
+        /* Search bar */
+        .search-bar {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.3s;
+        }
+
+        .search-bar:focus-within {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px var(--primary-glow);
+        }
+
+        .search-bar input {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            outline: none;
+            flex: 1;
+            font-size: 0.9rem;
+        }
+
+        .search-bar input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        /* Trending topics */
+        .trending-pill {
+            display: inline-block;
+            padding: 0.3rem 0.7rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            background: rgba(108, 92, 231, 0.12);
+            color: #a29bfe;
+            border: 1px solid rgba(108, 92, 231, 0.2);
+            margin: 0.2rem;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .trending-pill:hover {
+            background: rgba(108, 92, 231, 0.25);
+            border-color: var(--primary);
+        }
+
+        .trending-count {
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+            margin-left: 0.2rem;
+        }
+
+        /* Pagination */
+        .pagination-custom .page-link {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            border-radius: 8px;
+            margin: 0 0.15rem;
+            font-size: 0.85rem;
+        }
+
+        .pagination-custom .page-link:hover {
+            background: var(--bg-surface);
+            border-color: var(--primary);
+        }
+
+        .pagination-custom .page-item.active .page-link {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #fff;
+        }
+
+        .pagination-custom .page-item.disabled .page-link {
+            opacity: 0.4;
+        }
+
+        /* Source health indicators */
+        .health-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 0.3rem;
+        }
+
+        .health-ok {
+            background: #00b894;
+            box-shadow: 0 0 6px rgba(0, 184, 148, 0.5);
+        }
+
+        .health-error {
+            background: #d63031;
+            box-shadow: 0 0 6px rgba(214, 48, 49, 0.5);
+        }
+
+        .health-idle {
+            background: #636e72;
+        }
+
+        /* Charts Section */
+        .chart-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1rem;
+            height: 250px;
+        }
+
+        /* Filters row */
+        .filter-bar {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .filter-bar select,
+        .filter-bar .btn {
+            font-size: 0.8rem;
+            border-radius: 8px;
+        }
+
+        .filter-bar select {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 0.35rem 0.6rem;
+        }
+
+        /* Tabs */
+        .nav-tabs-custom {
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1rem;
+        }
+
+        .nav-tabs-custom .nav-link {
+            color: var(--text-secondary);
+            border: none;
+            padding: 0.6rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .nav-tabs-custom .nav-link.active {
+            color: var(--primary);
+            background: rgba(108, 92, 231, 0.1);
+            border-bottom: 2px solid var(--primary);
+        }
+
+        /* Loading overlay */
+        .loading-overlay {
             display: none;
             position: fixed;
             top: 0;
             left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
+            right: 0;
+            bottom: 0;
+            background: rgba(10, 10, 26, 0.85);
             z-index: 9999;
             justify-content: center;
             align-items: center;
-            color: white;
             flex-direction: column;
         }
 
+        .loading-overlay.show {
+            display: flex;
+        }
+
         /* Footer */
-        footer {
-            background: #f9fafb !important;
-            border-top: 1px solid #e5e7eb !important;
+        .footer-section {
+            background: var(--bg-card);
+            border-top: 1px solid var(--border);
+            padding: 2rem 0;
+            margin-top: 3rem;
         }
 
-        [data-bs-theme="dark"] footer {
-            background: #111827 !important;
-            border-top-color: #374151 !important;
+        /* Scroll to top */
+        .scroll-top {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            font-size: 1.1rem;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            cursor: pointer;
+            box-shadow: 0 4px 15px var(--primary-glow);
+            transition: all 0.3s;
         }
 
-        footer .bg-dark {
-            background: #111827 !important;
+        .scroll-top:hover {
+            transform: translateY(-3px);
         }
 
-        /* Alert */
-        .alert {
-            border-radius: 8px;
-            border: 1px solid #d1d5db;
-            background: #f9fafb;
+        .scroll-top.show {
+            display: flex;
         }
 
-        [data-bs-theme="dark"] .alert {
-            background: #1f2937;
-            border-color: #374151;
+        /* Responsive */
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .article-meta {
+                display: none;
+            }
+
+            .article-row {
+                padding: 0.7rem;
+            }
+        }
+
+        /* Modal custom */
+        .modal-content {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+        }
+
+        .modal-header {
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-footer {
+            border-top: 1px solid var(--border);
+        }
+
+        /* Cluster header */
+        .cluster-header {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-secondary);
+            padding: 0.3rem 0;
+            margin-top: 0.5rem;
+            border-top: 1px dashed var(--border);
+        }
+
+        .cluster-header:first-child {
+            border-top: none;
+            margin-top: 0;
+        }
+
+        /* Read time */
+        .read-time {
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+            white-space: nowrap;
         }
     </style>
 </head>
 
 <body>
-    <!-- Loading Spinner -->
-    <div id="loadingSpinner" class="spinner-overlay">
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
         <div class="spinner-border text-light" role="status" style="width: 3rem; height: 3rem;">
             <span class="visually-hidden">Loading...</span>
         </div>
-        <h4 class="mt-3">Scraping Hacker News...</h4>
-        <p>This might take a few seconds.</p>
+        <h4 class="mt-3">Scraping all sources...</h4>
+        <p class="text-secondary">This might take a few seconds.</p>
     </div>
 
-    <div class="container position-relative">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h1 class="mb-0">Hacker News Scraper</h1>
-            <div class="d-flex gap-2">
-                <a href="/" class="btn btn-outline-primary btn-sm {% if not showing_saved %}active{% endif %}">Home</a>
-                <a href="/saved" class="btn btn-outline-warning btn-sm {% if showing_saved %}active{% endif %}">Saved
-                    Articles</a>
-                <button id="darkModeToggle" class="btn btn-outline-secondary btn-sm">Dark Mode</button>
-            </div>
-        </div>
-
-        <!-- Stats Dashboard -->
-        <div class="row g-3 mb-4" id="statsDashboard">
-            <div class="col-md-3">
-                <div class="card text-center shadow-sm">
-                    <div class="card-body">
-                        <i class="bi bi-file-earmark-text fs-2 text-primary"></i>
-                        <h3 class="mt-2 mb-0" id="totalArticles">-</h3>
-                        <p class="text-muted mb-0">Total Articles</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center shadow-sm">
-                    <div class="card-body">
-                        <i class="bi bi-calendar-check fs-2 text-success"></i>
-                        <h3 class="mt-2 mb-0" id="todayArticles">-</h3>
-                        <p class="text-muted mb-0">New Today</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center shadow-sm">
-                    <div class="card-body">
-                        <i class="bi bi-star-fill fs-2 text-warning"></i>
-                        <h3 class="mt-2 mb-0" id="savedArticles">-</h3>
-                        <p class="text-muted mb-0">Saved Articles</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card text-center shadow-sm">
-                    <div class="card-body">
-                        <i class="bi bi-graph-up fs-2 text-info"></i>
-                        <h3 class="mt-2 mb-0" id="topSource">-</h3>
-                        <p class="text-muted mb-0">Top Source</p>
-                    </div>
+    <!-- Navbar -->
+    <nav class="navbar navbar-custom sticky-top">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-broadcast"></i> Tech News Aggregator
+            </a>
+            <div class="d-flex gap-2 align-items-center">
+                <a href="/"
+                    class="btn btn-sm {% if not showing_saved %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                    style="border-radius:8px;font-size:0.8rem;">
+                    <i class="bi bi-house"></i> Home
+                </a>
+                <a href="/saved"
+                    class="btn btn-sm {% if showing_saved %}btn-warning{% else %}btn-outline-warning{% endif %}"
+                    style="border-radius:8px;font-size:0.8rem;">
+                    <i class="bi bi-bookmark-fill"></i> Saved
+                </a>
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                        style="border-radius:8px;font-size:0.8rem;" data-bs-toggle="dropdown">
+                        <i class="bi bi-download"></i> Export
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-dark">
+                        <li><a class="dropdown-item" href="/download"><i class="bi bi-filetype-csv"></i> CSV (All)</a>
+                        </li>
+                        <li><a class="dropdown-item" href="/export/json"><i class="bi bi-filetype-json"></i> Bookmarks
+                                (JSON)</a></li>
+                        <li><a class="dropdown-item" href="/export/markdown"><i class="bi bi-markdown"></i> Bookmarks
+                                (Markdown)</a></li>
+                    </ul>
                 </div>
             </div>
         </div>
+    </nav>
 
-        {% if not showing_saved %}
-        <div class="card p-4 shadow-sm">
-            <form action="/" method="post" id="scrapeForm">
-                <div class="row g-3 align-items-end">
-                    <div class="col-md-2">
-                        <label for="pages" class="form-label">Pages (HN)</label>
-                        <input type="number" class="form-control" id="pages" name="pages" min="1" max="10"
-                            value="{{ pages or 1 }}">
+    <div class="container mt-4">
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">{{ stats.total if stats else 0 }}</div>
+                <div class="stat-label">Total Articles</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ stats.today if stats else 0 }}</div>
+                <div class="stat-label">New Today</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ stats.saved if stats else 0 }}</div>
+                <div class="stat-label">Bookmarked</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ stats.read if stats else 0 }}</div>
+                <div class="stat-label">Read</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">{{ stats.by_source|length if stats and stats.by_source else 0 }}</div>
+                <div class="stat-label">Sources</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <ul class="nav nav-tabs-custom" id="mainTabs">
+            <li class="nav-item">
+                <a class="nav-link active" data-tab="articles" href="#"><i class="bi bi-newspaper"></i> Articles</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-tab="trending" href="#"><i class="bi bi-fire"></i> Trending</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-tab="charts" href="#"><i class="bi bi-graph-up"></i> Analytics</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-tab="health" href="#"><i class="bi bi-heart-pulse"></i> Sources</a>
+            </li>
+        </ul>
+
+        <!-- Tab: Articles -->
+        <div id="tab-articles" class="tab-content-pane">
+            <!-- Search + Scrape Form -->
+            <form method="POST" action="/" id="scrapeForm">
+                <div class="row g-2 mb-3">
+                    <div class="col-md-5">
+                        <div class="search-bar">
+                            <i class="bi bi-search text-secondary"></i>
+                            <input type="text" name="keyword" placeholder="Search articles..."
+                                value="{{ keyword|default('') }}">
+                        </div>
                     </div>
-                    <div class="col-md-3">
-                        <label for="source" class="form-label">Source</label>
-                        <select class="form-select" id="source" name="source">
-                            <option value="all" {% if source=='all' %}selected{% endif %}>All Sources</option>
-                            <option value="Hacker News" {% if source=='Hacker News' %}selected{% endif %}>Hacker News
+                    <div class="col-auto">
+                        <select name="source" class="form-select form-select-sm"
+                            style="background:var(--bg-surface);border-color:var(--border);color:var(--text-primary);border-radius:8px;">
+                            <option value="all" {% if source_filter|default('all')=='all' %}selected{% endif %}>All
+                                Sources</option>
+                            <option value="Hacker News" {% if source_filter|default('')=='Hacker News' %}selected{%
+                                endif %}>Hacker News</option>
+                            <option value="TechCrunch" {% if source_filter|default('')=='TechCrunch' %}selected{% endif
+                                %}>TechCrunch</option>
+                            <option value="Reddit" {% if source_filter|default('')=='Reddit' %}selected{% endif %}>
+                                Reddit</option>
+                            <option value="The Verge" {% if source_filter|default('')=='The Verge' %}selected{% endif
+                                %}>The Verge</option>
+                            <option value="Ars Technica" {% if source_filter|default('')=='Ars Technica' %}selected{%
+                                endif %}>Ars Technica</option>
+                        </select>
+                    </div>
+                    <div class="col-auto">
+                        <select name="sort" class="form-select form-select-sm"
+                            style="background:var(--bg-surface);border-color:var(--border);color:var(--text-primary);border-radius:8px;">
+                            <option value="score" {% if sort_by|default('score')=='score' %}selected{% endif %}>Score ↓
                             </option>
-                            <option value="TechCrunch" {% if source=='TechCrunch' %}selected{% endif %}>TechCrunch
-                            </option>
-                            <option value="Reddit" {% if source=='Reddit' %}selected{% endif %}>Reddit</option>
-                            <option value="The Verge" {% if source=='The Verge' %}selected{% endif %}>The Verge</option>
-                            <option value="Ars Technica" {% if source=='Ars Technica' %}selected{% endif %}>Ars Technica
+                            <option value="comments" {% if sort_by|default('')=='comments' %}selected{% endif %}>
+                                Comments ↓</option>
+                            <option value="newest" {% if sort_by|default('')=='newest' %}selected{% endif %}>Newest
                             </option>
                         </select>
                     </div>
-                    <div class="col-md-3">
-                        <label for="keyword" class="form-label">Filter Keyword</label>
-                        <input type="text" class="form-control" id="keyword" name="keyword"
-                            placeholder="e.g., python, ai" value="{{ keyword or '' }}">
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-sm text-white"
+                            style="background:var(--gradient-1);border-radius:8px;">
+                            <i class="bi bi-search"></i> Filter
+                        </button>
                     </div>
-                    <div class="col-md-2">
-                        <label for="sort" class="form-label">Sort By</label>
-                        <select class="form-select" id="sort" name="sort">
-                            <option value="score" {% if sort_by=='score' %}selected{% endif %}>Highest Score</option>
-                            <option value="comments" {% if sort_by=='comments' %}selected{% endif %}>Most Comments
-                            </option>
-                            <option value="newest" {% if sort_by=='newest' %}selected{% endif %}>Newest</option>
-                        </select>
+                    <div class="col-auto">
+                        <button type="submit" name="refresh" value="true" class="btn btn-sm btn-outline-success"
+                            style="border-radius:8px;"
+                            onclick="document.getElementById('loadingOverlay').classList.add('show');">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
                     </div>
-                    <div class="col-md-2">
-                        <button type="submit" class="btn btn-primary w-100">Scrape</button>
-                    </div>
-                </div>
-                <div class="mt-2 text-end">
-                    <div class="form-check form-check-inline">
-                        <input class="form-check-input" type="checkbox" id="refresh" name="refresh" value="true">
-                        <label class="form-check-label" for="refresh">Force Refresh</label>
-                    </div>
+                    <input type="hidden" name="pages" value="2">
                 </div>
             </form>
-        </div>
-        {% else %}
-        <div class="alert alert-info">
-            Showing stored bookmarks. <a href="/">Back to all news</a>.
-        </div>
-        {% endif %}
 
-        {% if articles %}
-        <div class="news-table">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h3>{% if showing_saved %}Saved Articles{% else %}Results{% endif %} ({{ articles|length }})</h3>
-                {% if not showing_saved %}
-                <a href="/download?keyword={{ keyword }}&sort={{ sort_by }}" class="btn btn-success btn-sm">
-                    Download CSV
-                </a>
-                {% endif %}
+            <!-- FTS Search -->
+            <div id="ftsSearchResults" class="mb-3" style="display:none;">
+                <div class="glass-card">
+                    <h6><i class="bi bi-search"></i> Full-Text Search Results</h6>
+                    <div id="ftsResults"></div>
+                </div>
             </div>
-            <div class="table-responsive">
-                <table class="table table-striped table-hover">
-                    <thead class="table-dark">
-                        <tr>
-                            <th style="width: 50px;">Save</th>
-                            <th>Score</th>
-                            <th>Source</th>
-                            <th>Title</th>
-                            <th>Author</th>
-                            <th>Time</th>
-                            <th>Comments</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for article in articles %}
-                        <tr>
-                            <td class="text-center align-top">
-                                <button class="bookmark-btn {% if article.is_saved %}saved{% endif %}"
-                                    data-id="{{ article.id }}" title="Bookmark">
-                                    <i class="bi {% if article.is_saved %}bi-star-fill{% else %}bi-star{% endif %}"></i>
-                                </button>
-                            </td>
-                            <td class="align-top"><span class="badge bg-secondary">{{ article.score }}</span></td>
-                            <td class="align-top">
-                                {% if article.source == 'Hacker News' %}
-                                <span class="badge bg-warning text-dark">HN</span>
-                                {% elif article.source == 'TechCrunch' %}
-                                <span class="badge bg-success">TC</span>
-                                {% elif article.source == 'Reddit' %}
-                                <span class="badge bg-danger">Reddit</span>
-                                {% elif article.source == 'The Verge' %}
-                                <span class="badge bg-dark" style="border: 1px solid white;">Verge</span>
-                                {% elif article.source == 'Ars Technica' %}
-                                <span class="badge" style="background-color: #ff4e00; color: white;">Ars</span>
-                                {% else %}
-                                <span class="badge bg-secondary">{{ article.source }}</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <div>
-                                    <a href="{{ article.link }}" target="_blank" class="text-decoration-none fw-bold">{{
-                                        article.title }}</a>
-                                </div>
 
-                                {% if article.related_articles %}
-                                <div class="mt-2 ms-3 border-start border-3 ps-2">
-                                    <small class="text-muted text-uppercase fw-bold" style="font-size: 0.7rem;">Related
-                                        Coverage</small>
-                                    <ul class="list-unstyled mb-0 mt-1">
-                                        {% for related in article.related_articles %}
-                                        <li class="mb-1">
-                                            <span class="badge bg-light text-dark border me-1"
-                                                style="font-size: 0.65em;">{{ related.source }}</span>
-                                            <a href="{{ related.link }}" target="_blank"
-                                                class="text-decoration-none text-secondary" style="font-size: 0.85rem;">
-                                                {{ related.title }}
-                                            </a>
-                                        </li>
-                                        {% endfor %}
-                                    </ul>
-                                </div>
-                                {% endif %}
-                            </td>
-                            <td class="align-top text-nowrap">{{ article.author }}</td>
-                            <td class="align-top text-nowrap">{{ article.time }}</td>
-                            <td class="align-top">{{ article.comments }}</td>
-                            <td class="align-top">
-                                <button class="btn btn-sm btn-outline-info summarize-btn"
-                                    data-url="{{ article.link }}">Summarize</button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <!-- Articles List -->
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <small class="text-secondary">
+                    Showing {{ articles|length if articles else 0 }} of {{ total_count|default(0) }} articles
+                    {% if page|default(1) > 1 %} — Page {{ page }}{% endif %}
+                </small>
+                <div class="d-flex gap-1">
+                    <button class="btn-icon" onclick="fetchPersonalized()" title="Personalized Feed">
+                        <i class="bi bi-magic"></i>
+                    </button>
+                </div>
             </div>
-        </div>
-        {% elif request.method == 'POST' or showing_saved %}
-        <div class="alert alert-warning mt-4" role="alert">
-            No articles found.
-        </div>
-        {% endif %}
-    </div>
 
-    <!-- Footer with Subscribe -->
-    <footer class="bg-light text-center text-lg-start mt-5 border-top">
-        <div class="container p-4">
-            <div class="row justify-content-center">
-                <div class="col-lg-6">
-                    <h5 class="text-uppercase mb-3">Subscribe to Daily Digest</h5>
-                    <p>Get the top tech news delivered to your inbox every morning.</p>
-                    <form id="subscribeForm" class="d-flex gap-2">
-                        <input type="email" id="emailInput" class="form-control" placeholder="Enter your email"
-                            required>
-                        <button type="submit" class="btn btn-primary">Subscribe</button>
-                    </form>
-                    <div id="subscribeMessage" class="mt-2 text-start"></div>
+            {% if clustered_articles %}
+            {% for parent in clustered_articles %}
+
+            {# Show cluster header if this parent has related articles #}
+            {% if parent.related_articles and parent.related_articles|length > 0 %}
+            <div class="cluster-header">
+                <i class="bi bi-collection"></i> Related Articles ({{ parent.related_articles|length + 1 }})
+            </div>
+            {% endif %}
+
+            {# Render the parent article #}
+            {% set article = parent %}
+            <div class="article-row {% if article.is_read %}is-read{% endif %}"
+                id="article-{{ article.id if article.id else loop.index }}">
+                <div class="score-pill" style="min-width: 45px;">
+                    <i class="bi bi-caret-up-fill"></i>
+                    {{ article.score if article.score else 0 }}
+                </div>
+                <div class="article-title">
+                    <a href="{{ article.link }}" target="_blank" rel="noopener">
+                        {{ article['title'] }}
+                    </a>
+                    <div class="d-flex gap-1 mt-1 flex-wrap">
+                        {% set src = article.source|default('') %}
+                        <span
+                            class="badge-source {% if 'Hacker' in src %}badge-hn{% elif 'TechCrunch' in src %}badge-tc{% elif 'Reddit' in src %}badge-reddit{% elif 'Verge' in src %}badge-verge{% elif 'Ars' in src %}badge-ars{% endif %}">{{
+                            src }}</span>
+                        {% if article.category and article.category != 'general' and article.category != 'General' %}
+                        <span class="badge-category">{{ article.category }}</span>
+                        {% endif %}
+                        {% if article.sentiment and article.sentiment != 'neutral' %}
+                        <span class="badge-sentiment sentiment-{{ article.sentiment }}">
+                            {% if article.sentiment == 'positive' %}😊{% else %}😟{% endif %} {{ article.sentiment }}
+                        </span>
+                        {% endif %}
+                        {% set created = article.created_at|default(0) %}
+                        {% if created %}
+                        {% set hours_ago = ((import_time - created) / 3600)|int if import_time is defined else 0 %}
+                        {% if hours_ago < 6 %}<span class="badge-age age-fresh">🟢 Fresh</span>
+                            {% elif hours_ago < 24 %}<span class="badge-age age-recent">🟡 Today</span>
+                                {% else %}<span class="badge-age age-old">⚪ {{ (hours_ago / 24)|int }}d ago</span>
+                                {% endif %}
+                                {% endif %}
+                                {% if article.read_time %}
+                                <span class="read-time"><i class="bi bi-clock"></i> {{ article.read_time }} min</span>
+                                {% endif %}
+                    </div>
+                </div>
+                <div class="article-meta">
+                    <small class="text-secondary">{{ article.comments|default('0') }} <i
+                            class="bi bi-chat-dots"></i></small>
+                    <button class="btn-icon {% if article.is_saved %}active{% endif %}"
+                        onclick="toggleBookmark({{ article.id }}, this)" title="Bookmark">
+                        <i class="bi {% if article.is_saved %}bi-bookmark-fill{% else %}bi-bookmark{% endif %}"></i>
+                    </button>
+                    <button class="btn-icon {% if article.is_read %}read-active{% endif %}"
+                        onclick="toggleRead({{ article.id }}, this)" title="Mark as read">
+                        <i class="bi {% if article.is_read %}bi-check-circle-fill{% else %}bi-circle{% endif %}"></i>
+                    </button>
+                    <button class="btn-icon" onclick="summarizeArticle('{{ article.link }}')" title="AI Summary">
+                        <i class="bi bi-stars"></i>
+                    </button>
+                </div>
+            </div>
+
+            {# Render related articles if any #}
+            {% if parent.related_articles %}
+            {% for article in parent.related_articles %}
+            <div class="article-row {% if article.is_read %}is-read{% endif %}"
+                style="margin-left: 1.5rem; border-left: 2px solid var(--primary);"
+                id="article-{{ article.id if article.id else loop.index }}">
+                <div class="score-pill" style="min-width: 45px;">
+                    <i class="bi bi-caret-up-fill"></i>
+                    {{ article.score if article.score else 0 }}
+                </div>
+                <div class="article-title">
+                    <a href="{{ article.link }}" target="_blank" rel="noopener">
+                        {{ article['title'] }}
+                    </a>
+                    <div class="d-flex gap-1 mt-1 flex-wrap">
+                        {% set src = article.source|default('') %}
+                        <span
+                            class="badge-source {% if 'Hacker' in src %}badge-hn{% elif 'TechCrunch' in src %}badge-tc{% elif 'Reddit' in src %}badge-reddit{% elif 'Verge' in src %}badge-verge{% elif 'Ars' in src %}badge-ars{% endif %}">{{
+                            src }}</span>
+                        {% if article.category and article.category != 'general' and article.category != 'General' %}
+                        <span class="badge-category">{{ article.category }}</span>
+                        {% endif %}
+                        {% if article.sentiment and article.sentiment != 'neutral' %}
+                        <span class="badge-sentiment sentiment-{{ article.sentiment }}">
+                            {% if article.sentiment == 'positive' %}😊{% else %}😟{% endif %} {{ article.sentiment }}
+                        </span>
+                        {% endif %}
+                        {% if article.read_time %}
+                        <span class="read-time"><i class="bi bi-clock"></i> {{ article.read_time }} min</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="article-meta">
+                    <small class="text-secondary">{{ article.comments|default('0') }} <i
+                            class="bi bi-chat-dots"></i></small>
+                    <button class="btn-icon {% if article.is_saved %}active{% endif %}"
+                        onclick="toggleBookmark({{ article.id }}, this)" title="Bookmark">
+                        <i class="bi {% if article.is_saved %}bi-bookmark-fill{% else %}bi-bookmark{% endif %}"></i>
+                    </button>
+                    <button class="btn-icon {% if article.is_read %}read-active{% endif %}"
+                        onclick="toggleRead({{ article.id }}, this)" title="Mark as read">
+                        <i class="bi {% if article.is_read %}bi-check-circle-fill{% else %}bi-circle{% endif %}"></i>
+                    </button>
+                    <button class="btn-icon" onclick="summarizeArticle('{{ article.link }}')" title="AI Summary">
+                        <i class="bi bi-stars"></i>
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+            {% endif %}
+            {% endfor %}
+            {% else %}
+            <div class="glass-card text-center py-5">
+                <i class="bi bi-newspaper" style="font-size:3rem;color:var(--text-secondary);"></i>
+                <h5 class="mt-3 text-secondary">No articles yet</h5>
+                <p class="text-secondary">Click <strong>Refresh</strong> to scrape the latest tech news.</p>
+            </div>
+            {% endif %}
+
+            <!-- Pagination -->
+            {% if total_pages|default(1) > 1 %}
+            <nav class="mt-3">
+                <ul class="pagination pagination-custom justify-content-center">
+                    <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+                        <a class="page-link"
+                            href="?page={{ page - 1 }}&sort={{ sort_by|default('score') }}&source={{ source_filter|default('all') }}&keyword={{ keyword|default('') }}">
+                            <i class="bi bi-chevron-left"></i>
+                        </a>
+                    </li>
+                    {% for p in range(1, total_pages + 1) %}
+                    {% if p <= 3 or p> total_pages - 3 or (p >= page - 1 and p <= page + 1) %} <li
+                            class="page-item {% if p == page %}active{% endif %}">
+                            <a class="page-link"
+                                href="?page={{ p }}&sort={{ sort_by|default('score') }}&source={{ source_filter|default('all') }}&keyword={{ keyword|default('') }}">{{
+                                p }}</a>
+                            </li>
+                            {% elif p == 4 or p == total_pages - 3 %}
+                            <li class="page-item disabled"><span class="page-link">…</span></li>
+                            {% endif %}
+                            {% endfor %}
+                            <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+                                <a class="page-link"
+                                    href="?page={{ page + 1 }}&sort={{ sort_by|default('score') }}&source={{ source_filter|default('all') }}&keyword={{ keyword|default('') }}">
+                                    <i class="bi bi-chevron-right"></i>
+                                </a>
+                            </li>
+                </ul>
+            </nav>
+            {% endif %}
+        </div>
+
+        <!-- Tab: Trending -->
+        <div id="tab-trending" class="tab-content-pane" style="display:none;">
+            <div class="glass-card">
+                <h5><i class="bi bi-fire"></i> Trending Topics</h5>
+                <p class="text-secondary" style="font-size:0.85rem;">Hot topics from the last 24 hours, extracted from
+                    article titles.</p>
+                <div id="trendingTopics" class="mt-3">
+                    <div class="text-center py-3">
+                        <div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
+                        <small class="text-secondary ms-2">Loading trending topics...</small>
+                    </div>
                 </div>
             </div>
         </div>
-        <div class="text-center p-3 bg-dark text-white">
-            © 2026 Tech News Scraper
+
+        <!-- Tab: Charts -->
+        <div id="tab-charts" class="tab-content-pane" style="display:none;">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="chart-container">
+                        <canvas id="sourceChart"></canvas>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="chart-container">
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="chart-container">
+                        <canvas id="sentimentChart"></canvas>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="chart-container">
+                        <canvas id="dailyChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Source Health -->
+        <div id="tab-health" class="tab-content-pane" style="display:none;">
+            <div class="glass-card">
+                <h5><i class="bi bi-heart-pulse"></i> Source Health Monitor</h5>
+                <p class="text-secondary mb-3" style="font-size:0.85rem;">Real-time status of all news sources.
+                    Background scraping runs every 15 minutes.</p>
+                <div id="healthCards" class="row g-2">
+                    {% if source_health %}
+                    {% for src in source_health %}
+                    <div class="col-md-4 col-6">
+                        <div class="glass-card text-center">
+                            <div>
+                                <span
+                                    class="health-dot {% if src.status == 'ok' %}health-ok{% elif src.status == 'error' %}health-error{% else %}health-idle{% endif %}"></span>
+                                <strong>{{ src.source }}</strong>
+                            </div>
+                            <small class="text-secondary">{{ src.article_count }} articles • {{ src.duration }}s</small>
+                            {% if src.last_error %}
+                            <br><small class="text-danger">{{ src.last_error[:50] }}</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% else %}
+                    <div class="col-12 text-center text-secondary py-3">
+                        <p>No health data yet. Run a scrape first.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer-section">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6>Subscribe for Daily Digest</h6>
+                    <form id="subscribeForm" class="d-flex gap-2 mt-2">
+                        <input type="email" id="subscribeEmail" class="form-control form-control-sm"
+                            placeholder="your@email.com"
+                            style="background:var(--bg-surface);border-color:var(--border);color:var(--text-primary);border-radius:8px;max-width:300px;">
+                        <button type="submit" class="btn btn-sm btn-primary"
+                            style="border-radius:8px;">Subscribe</button>
+                    </form>
+                    <div id="subscribeMessage" class="mt-2"></div>
+                </div>
+                <div class="col-md-6 text-md-end mt-3 mt-md-0">
+                    <small class="text-secondary">
+                        Tech News Aggregator — Built with Flask, Bootstrap &amp; ❤️
+                        <br>Data from HN, TechCrunch, Reddit, The Verge, Ars Technica
+                    </small>
+                </div>
+            </div>
         </div>
     </footer>
 
     <!-- Summary Modal -->
-    <div class="modal fade" id="summaryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal fade" id="summaryModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">Article Summary</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    <h5 class="modal-title" id="summaryTitle">Article Summary</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body">
-                    <div id="summaryLoader" class="text-center py-4">
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Loading...</span>
-                        </div>
-                        <p class="mt-2">Analyzing article...</p>
-                    </div>
-                    <div id="summaryContent" style="display: none;">
-                        <img id="summaryImage" src="" class="img-fluid mb-3 rounded"
-                            style="max-height: 300px; width: 100%; object-fit: cover; display: none;">
-                        <h4 id="summaryTitle" class="mb-3"></h4>
-                        <p id="summaryText" class="lead fs-6"></p>
+                <div class="modal-body" id="summaryBody">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p class="mt-2 text-secondary">Generating AI summary...</p>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- Scroll to top -->
+    <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">
+        <i class="bi bi-chevron-up"></i>
+    </button>
+
+    <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        const toggleButton = document.getElementById('darkModeToggle');
-        const htmlElement = document.documentElement;
-        const scrapeForm = document.getElementById('scrapeForm');
-        const loadingSpinner = document.getElementById('loadingSpinner');
+        // ── Tab Navigation ──
+        document.querySelectorAll('#mainTabs .nav-link').forEach(tab => {
+            tab.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = this.dataset.tab;
 
-        // Load Dashboard Stats
-        async function loadStats() {
+                document.querySelectorAll('#mainTabs .nav-link').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+
+                document.querySelectorAll('.tab-content-pane').forEach(p => p.style.display = 'none');
+                document.getElementById('tab-' + target).style.display = 'block';
+
+                // Load data on first open
+                if (target === 'trending') loadTrending();
+                if (target === 'charts') loadCharts();
+            });
+        });
+
+        // ── Bookmark Toggle ──
+        async function toggleBookmark(articleId, btn) {
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
             try {
-                const response = await fetch('/api/stats');
-                const stats = await response.json();
-
-                document.getElementById('totalArticles').textContent = stats.total || 0;
-                document.getElementById('todayArticles').textContent = stats.today || 0;
-                document.getElementById('savedArticles').textContent = stats.saved || 0;
-
-                // Find top source
-                let topSource = '-';
-                let maxCount = 0;
-                for (const [source, count] of Object.entries(stats.by_source || {})) {
-                    if (count > maxCount) {
-                        maxCount = count;
-                        topSource = source;
-                    }
+                const resp = await fetch('/bookmark', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ article_id: articleId })
+                });
+                const data = await resp.json();
+                if (data.status === 'saved') {
+                    btn.classList.add('active');
+                    btn.innerHTML = '<i class="bi bi-bookmark-fill"></i>';
+                } else {
+                    btn.classList.remove('active');
+                    btn.innerHTML = '<i class="bi bi-bookmark"></i>';
                 }
-                document.getElementById('topSource').textContent = topSource;
-            } catch (error) {
-                console.error('Error loading stats:', error);
+            } catch (e) {
+                btn.innerHTML = '<i class="bi bi-bookmark"></i>';
             }
         }
 
-        // Load stats on page load
-        loadStats();
+        // ── Read Toggle ──
+        async function toggleRead(articleId, btn) {
+            try {
+                const resp = await fetch('/toggle_read', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ article_id: articleId })
+                });
+                const data = await resp.json();
+                const row = btn.closest('.article-row');
+                if (data.status === 'read') {
+                    btn.classList.add('read-active');
+                    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+                    row.classList.add('is-read');
+                } else {
+                    btn.classList.remove('read-active');
+                    btn.innerHTML = '<i class="bi bi-circle"></i>';
+                    row.classList.remove('is-read');
+                }
+            } catch (e) { console.error(e); }
+        }
 
-        // Subscribe Form
+        // ── Summarize ──
+        async function summarizeArticle(url) {
+            const modal = new bootstrap.Modal(document.getElementById('summaryModal'));
+            document.getElementById('summaryBody').innerHTML =
+                '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-secondary">Generating AI summary...</p></div>';
+            modal.show();
+
+            try {
+                const resp = await fetch('/api/summarize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    document.getElementById('summaryBody').innerHTML =
+                        `<div class="alert alert-danger">${data.error}</div>`;
+                } else {
+                    document.getElementById('summaryTitle').textContent = data.title || 'Summary';
+                    let html = '';
+                    if (data.top_image) {
+                        html += `<img src="${data.top_image}" class="img-fluid rounded mb-3" style="max-height:200px;object-fit:cover;width:100%;">`;
+                    }
+                    html += `<p>${data.summary}</p>`;
+                    html += `<a href="${url}" target="_blank" class="btn btn-sm btn-outline-primary">Read Full Article →</a>`;
+                    document.getElementById('summaryBody').innerHTML = html;
+                }
+            } catch (e) {
+                document.getElementById('summaryBody').innerHTML =
+                    '<div class="alert alert-danger">Failed to connect to server.</div>';
+            }
+        }
+
+        // ── Trending Topics ──
+        let trendingLoaded = false;
+        async function loadTrending() {
+            if (trendingLoaded) return;
+            try {
+                const resp = await fetch('/api/trending');
+                const data = await resp.json();
+                const container = document.getElementById('trendingTopics');
+                if (data.topics && data.topics.length > 0) {
+                    container.innerHTML = data.topics.map(t =>
+                        `<span class="trending-pill" onclick="searchTopic('${t.topic}')">
+                            ${t.topic} <span class="trending-count">×${t.count}</span>
+                        </span>`
+                    ).join('');
+                } else {
+                    container.innerHTML = '<p class="text-secondary">No trending topics yet. Scrape some articles first!</p>';
+                }
+                trendingLoaded = true;
+            } catch (e) {
+                document.getElementById('trendingTopics').innerHTML = '<p class="text-danger">Failed to load trending topics.</p>';
+            }
+        }
+
+        function searchTopic(topic) {
+            window.location.href = `/?keyword=${encodeURIComponent(topic)}`;
+        }
+
+        // ── Charts ──
+        let chartsLoaded = false;
+        async function loadCharts() {
+            if (chartsLoaded) return;
+            try {
+                const resp = await fetch('/api/charts');
+                const data = await resp.json();
+
+                const colors = ['#6c5ce7', '#00cec9', '#fd79a8', '#fdcb6e', '#00b894', '#e17055', '#74b9ff', '#a29bfe'];
+
+                // Source chart
+                if (data.by_source) {
+                    new Chart(document.getElementById('sourceChart'), {
+                        type: 'doughnut',
+                        data: {
+                            labels: Object.keys(data.by_source),
+                            datasets: [{ data: Object.values(data.by_source), backgroundColor: colors }]
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            plugins: {
+                                title: { display: true, text: 'Articles by Source', color: '#e8e8f0' },
+                                legend: { labels: { color: '#8888aa', font: { size: 11 } } }
+                            }
+                        }
+                    });
+                }
+
+                // Category chart
+                if (data.by_category) {
+                    new Chart(document.getElementById('categoryChart'), {
+                        type: 'bar',
+                        data: {
+                            labels: Object.keys(data.by_category),
+                            datasets: [{
+                                label: 'Count', data: Object.values(data.by_category),
+                                backgroundColor: 'rgba(108,92,231,0.6)', borderColor: '#6c5ce7', borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                            plugins: {
+                                title: { display: true, text: 'Articles by Category', color: '#e8e8f0' },
+                                legend: { display: false }
+                            },
+                            scales: {
+                                x: { ticks: { color: '#8888aa' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                                y: { ticks: { color: '#8888aa' }, grid: { display: false } }
+                            }
+                        }
+                    });
+                }
+
+                // Sentiment chart
+                if (data.by_sentiment) {
+                    const sentColors = { positive: '#00b894', neutral: '#636e72', negative: '#d63031' };
+                    new Chart(document.getElementById('sentimentChart'), {
+                        type: 'pie',
+                        data: {
+                            labels: Object.keys(data.by_sentiment),
+                            datasets: [{
+                                data: Object.values(data.by_sentiment),
+                                backgroundColor: Object.keys(data.by_sentiment).map(s => sentColors[s] || '#636e72')
+                            }]
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            plugins: {
+                                title: { display: true, text: 'Sentiment Distribution', color: '#e8e8f0' },
+                                legend: { labels: { color: '#8888aa' } }
+                            }
+                        }
+                    });
+                }
+
+                // Daily chart
+                if (data.daily && data.daily.length > 0) {
+                    new Chart(document.getElementById('dailyChart'), {
+                        type: 'line',
+                        data: {
+                            labels: data.daily.map(d => d.day),
+                            datasets: [{
+                                label: 'Articles', data: data.daily.map(d => d.count),
+                                borderColor: '#00cec9', backgroundColor: 'rgba(0,206,201,0.1)',
+                                fill: true, tension: 0.4
+                            }]
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            plugins: {
+                                title: { display: true, text: 'Articles per Day (7 days)', color: '#e8e8f0' },
+                                legend: { display: false }
+                            },
+                            scales: {
+                                x: { ticks: { color: '#8888aa' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                                y: { ticks: { color: '#8888aa' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                            }
+                        }
+                    });
+                }
+
+                chartsLoaded = true;
+            } catch (e) { console.error('Chart load failed:', e); }
+        }
+
+        // ── Personalized Feed ──
+        async function fetchPersonalized() {
+            try {
+                const resp = await fetch('/api/personalized');
+                const data = await resp.json();
+                if (data.articles && data.articles.length > 0) {
+                    alert(`Found ${data.articles.length} personalized recommendations! Feature coming soon to the UI.`);
+                } else {
+                    alert('Bookmark some articles first to get personalized recommendations!');
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        // ── Subscribe ──
         const subscribeForm = document.getElementById('subscribeForm');
-        const subscribeMessage = document.getElementById('subscribeMessage');
-
         if (subscribeForm) {
-            subscribeForm.addEventListener('submit', async (e) => {
+            subscribeForm.addEventListener('submit', async function (e) {
                 e.preventDefault();
-                const email = document.getElementById('emailInput').value;
-
+                const email = document.getElementById('subscribeEmail').value;
+                const msg = document.getElementById('subscribeMessage');
                 try {
-                    const response = await fetch('/subscribe', {
+                    const resp = await fetch('/subscribe', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email: email })
+                        body: JSON.stringify({ email })
                     });
-                    const data = await response.json();
-
-                    if (response.ok) {
-                        subscribeMessage.innerHTML = `<span class="text-success">${data.message}</span>`;
+                    const data = await resp.json();
+                    if (resp.ok) {
+                        msg.textContent = data.message;
+                        msg.className = 'mt-2 text-success';
                         subscribeForm.reset();
                     } else {
-                        subscribeMessage.innerHTML = `<span class="text-danger">${data.error}</span>`;
+                        msg.textContent = data.error;
+                        msg.className = 'mt-2 text-danger';
                     }
-                } catch (error) {
-                    subscribeMessage.innerHTML = `<span class="text-danger">Error connecting to server.</span>`;
+                } catch (e) {
+                    msg.textContent = 'Error connecting to server.';
+                    msg.className = 'mt-2 text-danger';
                 }
             });
         }
 
-        // Show spinner on submit
-        if (scrapeForm) {
-            scrapeForm.addEventListener('submit', () => {
-                loadingSpinner.style.display = 'flex';
-            });
+        // ── Scroll to top ──
+        window.addEventListener('scroll', () => {
+            const btn = document.getElementById('scrollTop');
+            if (window.scrollY > 400) { btn.classList.add('show'); }
+            else { btn.classList.remove('show'); }
+        });
+
+        // ── PWA Registration ──
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js')
+                .then(() => console.log('SW registered'))
+                .catch(err => console.log('SW registration failed:', err));
         }
-
-        // Check local storage
-        if (localStorage.getItem('theme') === 'dark') {
-            htmlElement.setAttribute('data-bs-theme', 'dark');
-            toggleButton.textContent = 'Light Mode';
-        }
-
-        toggleButton.addEventListener('click', () => {
-            if (htmlElement.getAttribute('data-bs-theme') === 'dark') {
-                htmlElement.setAttribute('data-bs-theme', 'light');
-                toggleButton.textContent = 'Dark Mode';
-                localStorage.setItem('theme', 'light');
-            } else {
-                htmlElement.setAttribute('data-bs-theme', 'dark');
-                toggleButton.textContent = 'Light Mode';
-                localStorage.setItem('theme', 'dark');
-            }
-        });
-
-        // Summarize functionality
-        const summaryModal = new bootstrap.Modal(document.getElementById('summaryModal'));
-        const summaryLoader = document.getElementById('summaryLoader');
-        const summaryContent = document.getElementById('summaryContent');
-        const summaryTitle = document.getElementById('summaryTitle');
-        const summaryText = document.getElementById('summaryText');
-        const summaryImage = document.getElementById('summaryImage');
-
-        document.querySelectorAll('.summarize-btn').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.preventDefault();
-                const url = btn.dataset.url;
-
-                // Reset and show modal
-                summaryLoader.style.display = 'block';
-                summaryContent.style.display = 'none';
-                summaryModal.show();
-
-                try {
-                    const response = await fetch('/summarize', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url: url })
-                    });
-
-                    const data = await response.json();
-
-                    if (response.ok) {
-                        summaryTitle.textContent = data.title;
-                        summaryText.textContent = data.summary || "No summary available.";
-
-                        if (data.top_image) {
-                            summaryImage.src = data.top_image;
-                            summaryImage.style.display = 'block';
-                        } else {
-                            summaryImage.style.display = 'none';
-                        }
-
-                        summaryLoader.style.display = 'none';
-                        summaryContent.style.display = 'block';
-                    } else {
-                        throw new Error(data.error || 'Failed to summarize');
-                    }
-                } catch (error) {
-                    summaryTitle.textContent = "Error";
-                    summaryText.textContent = error.message;
-                    summaryImage.style.display = 'none';
-                    summaryLoader.style.display = 'none';
-                    summaryContent.style.display = 'block';
-                }
-            });
-        });
-
-        // Bookmark functionality
-        document.querySelectorAll('.bookmark-btn').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const articleId = btn.dataset.id;
-                const icon = btn.querySelector('i');
-
-                try {
-                    const response = await fetch(`/bookmark/${articleId}`, { method: 'POST' });
-                    const data = await response.json();
-
-                    if (data.is_saved) {
-                        btn.classList.add('saved');
-                        icon.classList.remove('bi-star');
-                        icon.classList.add('bi-star-fill');
-                    } else {
-                        btn.classList.remove('saved');
-                        icon.classList.remove('bi-star-fill');
-                        icon.classList.add('bi-star');
-                    }
-                } catch (error) {
-                    console.error('Bookmark error:', error);
-                }
-            });
-        });
     </script>
 </body>
 
