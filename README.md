@@ -29,7 +29,7 @@ A modern, professional web application for aggregating and viewing technology ne
 
 ### 🎨 Modern Interface
 - **Clean Design**: Professional SaaS-style dashboard
-- **Dark Mode**: Full theme support with persistent preferences
+- **Monochrome Theme**: Professional black/gray/white interface (no distractions)
 - **Responsive Layout**: Works on desktop and mobile
 - **AI Summarization**: Popup modal with article summaries
 - **CSV Export**: Download filtered results for analysis
@@ -78,7 +78,7 @@ Open [http://127.0.0.1:5000/](http://127.0.0.1:5000/) in your browser.
 ### Using the Dashboard
 
 1. **View Statistics**: See total articles, new today, saved articles, and top source
-2. **Scrape Articles**: Click "Refresh" to fetch latest news from all sources
+2. **Scrape Articles**: Click **"Scrape Now"** in the top navbar to fetch latest news
 3. **Filter Content**: Use source dropdown or keyword search
 4. **Save Articles**: Click the star icon to bookmark articles
 5. **View Summaries**: Click "Summarize" on any article
