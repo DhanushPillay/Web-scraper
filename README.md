@@ -33,6 +33,8 @@ A modern, professional web application for aggregating and viewing technology ne
 - **Responsive Layout**: Works on desktop and mobile
 - **AI Summarization**: Popup modal with article summaries
 - **CSV Export**: Download filtered results for analysis
+- **Sentiment Analysis**: AI-powered sentiment detection (Positive/Negative/Neutral)
+- **Trending Topics**: Visual tracking of popular keywords
 
 ### 📧 Email Digest (Beta)
 - Subscribe to daily news updates (skeleton implementation)
@@ -140,8 +142,9 @@ CREATE TABLE articles (
 - Complete email digest with SMTP integration
 - User authentication and profiles
 - More sources (Dev.to, Product Hunt, Slashdot)
-- Sentiment analysis
-- Trending topics visualization
+- Complete email digest with SMTP integration
+- User authentication and profiles
+- More sources (Dev.to, Product Hunt, Slashdot)
 
 ## License
 
