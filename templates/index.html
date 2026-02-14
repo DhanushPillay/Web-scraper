@@ -11,22 +11,28 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#6c5ce7">
+    <meta name="theme-color" content="#0f172a">
     <style>
         :root {
-            --primary: #8b5cf6;
-            --primary-hover: #7c3aed;
-            --primary-glow: rgba(139, 92, 246, 0.4);
-            --accent: #14b8a6;
-            --bg-dark: #0f172a;
-            --bg-card: #1e293b;
-            --bg-surface: #334155;
+            /* Custom Variables */
+            --primary: #f8fafc;
+            --primary-hover: #e2e8f0;
+            --primary-glow: rgba(255, 255, 255, 0.25);
+            --accent: #cbd5e1;
+            --bg-dark: #09090b;
+            --bg-card: #18181b;
+            --bg-surface: #27272a;
             --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --border: rgba(255, 255, 255, 0.1);
-            --gradient-1: linear-gradient(135deg, #8b5cf6, #d946ef);
+            --text-secondary: #a1a1aa;
+            --border: rgba(255, 255, 255, 0.15);
+            --gradient-1: linear-gradient(135deg, #f8fafc, #94a3b8);
             --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
             --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+            /* Bootstrap Overrides */
+            --bs-primary: #f8fafc;
+            --bs-body-bg: #09090b;
+            --bs-body-color: #f8fafc;
         }
 
         * {
@@ -140,7 +146,7 @@
 
         .glass-card:hover {
             border-color: var(--primary);
-            box-shadow: 0 4px 24px rgba(108, 92, 231, 0.15);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
         }
 
         /* Article rows */
@@ -199,29 +205,14 @@
             white-space: nowrap;
         }
 
-        .badge-hn {
-            background: #ff6600;
-            color: #fff;
-        }
-
-        .badge-tc {
-            background: #0a9e28;
-            color: #fff;
-        }
-
-        .badge-reddit {
-            background: #ff4500;
-            color: #fff;
-        }
-
-        .badge-verge {
-            background: #e6007a;
-            color: #fff;
-        }
-
+        .badge-hn,
+        .badge-tc,
+        .badge-reddit,
+        .badge-verge,
         .badge-ars {
-            background: #ff7e00;
-            color: #fff;
+            background: rgba(255, 255, 255, 0.1) !important;
+            color: var(--text-primary) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
         }
 
         .badge-age {
@@ -231,18 +222,20 @@
         }
 
         .age-fresh {
-            background: rgba(0, 206, 201, 0.2);
-            color: #00cec9;
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
         .age-recent {
-            background: rgba(253, 203, 110, 0.2);
-            color: #fdcb6e;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
         }
 
         .age-old {
-            background: rgba(136, 136, 170, 0.2);
-            color: #8888aa;
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
         .badge-sentiment {
@@ -252,26 +245,27 @@
         }
 
         .sentiment-positive {
-            background: rgba(0, 184, 148, 0.2);
-            color: #00b894;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
         }
 
         .sentiment-negative {
-            background: rgba(214, 48, 49, 0.2);
-            color: #d63031;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
         }
 
         .sentiment-neutral {
-            background: rgba(136, 136, 170, 0.15);
-            color: #8888aa;
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
         .badge-category {
             font-size: 0.6rem;
             padding: 0.15rem 0.4rem;
             border-radius: 4px;
-            background: rgba(108, 92, 231, 0.15);
-            color: #a29bfe;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
         }
 
         /* Score pill */
@@ -298,7 +292,7 @@
 
         .btn-icon:hover {
             color: var(--primary);
-            background: rgba(108, 92, 231, 0.1);
+            background: rgba(255, 255, 255, 0.1);
         }
 
         .btn-icon.active {
@@ -348,17 +342,18 @@
             border-radius: 20px;
             font-size: 0.75rem;
             font-weight: 500;
-            background: rgba(108, 92, 231, 0.12);
-            color: #a29bfe;
-            border: 1px solid rgba(108, 92, 231, 0.2);
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-secondary);
+            border: 1px solid rgba(255, 255, 255, 0.1);
             margin: 0.2rem;
             transition: all 0.2s;
             cursor: pointer;
         }
 
         .trending-pill:hover {
-            background: rgba(108, 92, 231, 0.25);
+            background: rgba(255, 255, 255, 0.1);
             border-color: var(--primary);
+            color: var(--text-primary);
         }
 
         .trending-count {
@@ -389,8 +384,8 @@
         .pagination-custom .page-item.active .page-link {
             background: var(--primary);
             border-color: var(--primary);
-            color: #fff;
-            box-shadow: 0 4px 10px rgba(139, 92, 246, 0.4);
+            color: #000;
+            box-shadow: 0 4px 10px rgba(255, 255, 255, 0.2);
         }
 
         .pagination-custom .page-item.disabled .page-link {
@@ -409,17 +404,17 @@
         }
 
         .health-ok {
-            background: #00b894;
-            box-shadow: 0 0 6px rgba(0, 184, 148, 0.5);
+            background: #fff;
+            box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
         }
 
         .health-error {
-            background: #d63031;
-            box-shadow: 0 0 6px rgba(214, 48, 49, 0.5);
+            background: #525252;
         }
 
         .health-idle {
-            background: #636e72;
+            background: #262626;
+            border: 1px solid #525252;
         }
 
         /* Charts Section */
@@ -612,8 +607,8 @@
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            background: var(--primary);
-            color: #fff;
+            background: #fff;
+            color: #000;
             border: none;
             font-size: 1.1rem;
             display: none;
@@ -708,8 +703,8 @@
             <div class="d-flex gap-3 align-items-center">
                 <!-- Main Scrape Button -->
                 <button type="submit" form="scrapeForm" name="refresh" value="true"
-                    class="btn btn-primary d-flex align-items-center gap-2 shadow-sm"
-                    style="background: var(--primary); border: none; font-weight: 600; padding: 0.5rem 1.2rem; border-radius: 99px;"
+                    class="btn d-flex align-items-center gap-2 shadow-sm"
+                    style="background: #f8fafc !important; color: #000 !important; border: none; font-weight: 600; padding: 0.5rem 1.2rem; border-radius: 99px;"
                     onclick="document.getElementById('loadingOverlay').classList.add('show');">
                     <i class="bi bi-cloud-download-fill"></i> Scrape Now
                 </button>
@@ -827,17 +822,7 @@
                             </option>
                         </select>
                     </div>
-                    <div class="col-auto">
-                        <select name="sort" class="form-select form-select-sm"
-                            style="background:var(--bg-surface);border-color:var(--border);color:var(--text-primary);border-radius:8px;">
-                            <option value="score" {% if sort_by|default('score')=='score' %}selected{% endif %}>Score ↓
-                            </option>
-                            <option value="comments" {% if sort_by|default('')=='comments' %}selected{% endif %}>
-                                Comments ↓</option>
-                            <option value="newest" {% if sort_by|default('')=='newest' %}selected{% endif %}>Newest
-                            </option>
-                        </select>
-                    </div>
+
                     <div class="col-auto">
                         <button type="submit" class="btn btn-sm btn-outline-secondary" style="border-radius:8px;">
                             <i class="bi bi-funnel"></i> Apply Filter
@@ -872,12 +857,7 @@
             {% if clustered_articles %}
             {% for parent in clustered_articles %}
 
-            {# Show cluster header if this parent has related articles #}
-            {% if parent.related_articles and parent.related_articles|length > 0 %}
-            <div class="cluster-header">
-                <i class="bi bi-collection"></i> Related Articles ({{ parent.related_articles|length + 1 }})
-            </div>
-            {% endif %}
+
 
             {# Render the parent article #}
             {% set article = parent %}
@@ -935,10 +915,13 @@
             </div>
 
             {# Render related articles if any #}
-            {% if parent.related_articles %}
+            {% if parent.related_articles and parent.related_articles|length > 0 %}
+            <div class="cluster-header" style="margin-left: 1rem; margin-bottom: 0.5rem; border-top:none;">
+                <i class="bi bi-arrow-return-right"></i> Related Coverage
+            </div>
             {% for article in parent.related_articles %}
             <div class="article-row {% if article.is_read %}is-read{% endif %}"
-                style="margin-left: 1.5rem; border-left: 2px solid var(--primary);"
+                style="margin-left: 1rem; border-left: 3px solid var(--primary); border-radius: 4px 16px 16px 4px; background: rgba(30, 41, 59, 0.7);"
                 id="article-{{ article.id if article.id else loop.index }}">
                 <div class="score-pill" style="min-width: 45px;">
                     <i class="bi bi-caret-up-fill"></i>
@@ -1282,7 +1265,7 @@
                 const resp = await fetch('/api/charts');
                 const data = await resp.json();
 
-                const colors = ['#6c5ce7', '#00cec9', '#fd79a8', '#fdcb6e', '#00b894', '#e17055', '#74b9ff', '#a29bfe'];
+                const colors = ['#f8fafc', '#e2e8f0', '#cbd5e1', '#94a3b8', '#64748b', '#475569', '#334155', '#1e293b'];
 
                 // Source chart
                 if (data.by_source) {
@@ -1310,7 +1293,7 @@
                             labels: Object.keys(data.by_category),
                             datasets: [{
                                 label: 'Count', data: Object.values(data.by_category),
-                                backgroundColor: 'rgba(108,92,231,0.6)', borderColor: '#6c5ce7', borderWidth: 1
+                                backgroundColor: 'rgba(255,255,255,0.1)', borderColor: '#f8fafc', borderWidth: 1
                             }]
                         },
                         options: {
@@ -1329,7 +1312,7 @@
 
                 // Sentiment chart
                 if (data.by_sentiment) {
-                    const sentColors = { positive: '#00b894', neutral: '#636e72', negative: '#d63031' };
+                    const sentColors = { positive: '#f8fafc', neutral: '#94a3b8', negative: '#475569' };
                     new Chart(document.getElementById('sentimentChart'), {
                         type: 'pie',
                         data: {
@@ -1357,7 +1340,7 @@
                             labels: data.daily.map(d => d.day),
                             datasets: [{
                                 label: 'Articles', data: data.daily.map(d => d.count),
-                                borderColor: '#00cec9', backgroundColor: 'rgba(0,206,201,0.1)',
+                                borderColor: '#f8fafc', backgroundColor: 'rgba(255,255,255,0.05)',
                                 fill: true, tension: 0.4
                             }]
                         },
