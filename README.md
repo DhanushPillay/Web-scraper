@@ -34,7 +34,6 @@ A modern, professional web application for aggregating and viewing technology ne
 - **AI Summarization**: Popup modal with article summaries
 - **CSV Export**: Download filtered results for analysis
 - **Sentiment Analysis**: AI-powered sentiment detection (Positive/Negative/Neutral)
-- **Trending Topics**: Visual tracking of popular keywords
 
 ### 📧 Email Digest (Beta)
 - Subscribe to daily news updates (skeleton implementation)
