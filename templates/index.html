@@ -75,6 +75,7 @@
             letter-spacing: -0.025em;
             background: var(--gradient-1);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
             display: flex;
             align-items: center;
@@ -123,6 +124,7 @@
             margin-bottom: 0.25rem;
             background: var(--gradient-1);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -766,24 +768,8 @@
             </div>
         </div>
 
-        <!-- Tabs -->
-        <ul class="nav nav-tabs-custom" id="mainTabs">
-            <li class="nav-item">
-                <a class="nav-link active" data-tab="articles" href="#"><i class="bi bi-newspaper"></i> Articles</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" data-tab="trending" href="#"><i class="bi bi-fire"></i> Trending</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" data-tab="charts" href="#"><i class="bi bi-graph-up"></i> Analytics</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" data-tab="health" href="#"><i class="bi bi-heart-pulse"></i> Sources</a>
-            </li>
-        </ul>
-
-        <!-- Tab: Articles -->
-        <div id="tab-articles" class="tab-content-pane">
+        <!-- Main Content -->
+        <div id="main-content">
             <!-- Search + Scrape Form -->
             <form method="POST" action="/" id="scrapeForm">
                 <div class="row g-2 mb-3">
@@ -854,74 +840,9 @@
                 </div>
             </div>
 
-            {% if clustered_articles %}
-            {% for parent in clustered_articles %}
-
-
-
-            {# Render the parent article #}
-            {% set article = parent %}
+            {% if articles %}
+            {% for article in articles %}
             <div class="article-row {% if article.is_read %}is-read{% endif %}"
-                id="article-{{ article.id if article.id else loop.index }}">
-                <div class="score-pill" style="min-width: 45px;">
-                    <i class="bi bi-caret-up-fill"></i>
-                    {{ article.score if article.score else 0 }}
-                </div>
-                <div class="article-title">
-                    <a href="{{ article.link }}" target="_blank" rel="noopener">
-                        {{ article['title'] }}
-                    </a>
-                    <div class="d-flex gap-1 mt-1 flex-wrap">
-                        {% set src = article.source|default('') %}
-                        <span
-                            class="badge-source {% if 'Hacker' in src %}badge-hn{% elif 'TechCrunch' in src %}badge-tc{% elif 'Reddit' in src %}badge-reddit{% elif 'Verge' in src %}badge-verge{% elif 'Ars' in src %}badge-ars{% endif %}">{{
-                            src }}</span>
-                        {% if article.category and article.category != 'general' and article.category != 'General' %}
-                        <span class="badge-category">{{ article.category }}</span>
-                        {% endif %}
-                        {% if article.sentiment and article.sentiment != 'neutral' %}
-                        <span class="badge-sentiment sentiment-{{ article.sentiment }}">
-                            {% if article.sentiment == 'positive' %}😊{% else %}😟{% endif %} {{ article.sentiment }}
-                        </span>
-                        {% endif %}
-                        {% set created = article.created_at|default(0) %}
-                        {% if created %}
-                        {% set hours_ago = ((import_time - created) / 3600)|int if import_time is defined else 0 %}
-                        {% if hours_ago < 6 %}<span class="badge-age age-fresh">🟢 Fresh</span>
-                            {% elif hours_ago < 24 %}<span class="badge-age age-recent">🟡 Today</span>
-                                {% else %}<span class="badge-age age-old">⚪ {{ (hours_ago / 24)|int }}d ago</span>
-                                {% endif %}
-                                {% endif %}
-                                {% if article.read_time %}
-                                <span class="read-time"><i class="bi bi-clock"></i> {{ article.read_time }} min</span>
-                                {% endif %}
-                    </div>
-                </div>
-                <div class="article-meta">
-                    <small class="text-secondary">{{ article.comments|default('0') }} <i
-                            class="bi bi-chat-dots"></i></small>
-                    <button class="btn-icon {% if article.is_saved %}active{% endif %}"
-                        onclick="toggleBookmark({{ article.id }}, this)" title="Bookmark">
-                        <i class="bi {% if article.is_saved %}bi-bookmark-fill{% else %}bi-bookmark{% endif %}"></i>
-                    </button>
-                    <button class="btn-icon {% if article.is_read %}read-active{% endif %}"
-                        onclick="toggleRead({{ article.id }}, this)" title="Mark as read">
-                        <i class="bi {% if article.is_read %}bi-check-circle-fill{% else %}bi-circle{% endif %}"></i>
-                    </button>
-                    <button class="btn-icon" onclick="summarizeArticle('{{ article.link }}')" title="AI Summary">
-                        <i class="bi bi-stars"></i>
-                    </button>
-                </div>
-            </div>
-
-            {# Render related articles if any #}
-            {% if parent.related_articles and parent.related_articles|length > 0 %}
-            <div class="cluster-header" style="margin-left: 1rem; margin-bottom: 0.5rem; border-top:none;">
-                <i class="bi bi-arrow-return-right"></i> Related Coverage
-            </div>
-            {% for article in parent.related_articles %}
-            <div class="article-row {% if article.is_read %}is-read{% endif %}"
-                style="margin-left: 1rem; border-left: 3px solid var(--primary); border-radius: 4px 16px 16px 4px; background: rgba(30, 41, 59, 0.7);"
                 id="article-{{ article.id if article.id else loop.index }}">
                 <div class="score-pill" style="min-width: 45px;">
                     <i class="bi bi-caret-up-fill"></i>
@@ -966,8 +887,6 @@
                 </div>
             </div>
             {% endfor %}
-            {% endif %}
-            {% endfor %}
             {% else %}
             <div class="glass-card text-center py-5">
                 <i class="bi bi-newspaper" style="font-size:3rem;color:var(--text-secondary);"></i>
@@ -1008,78 +927,7 @@
             {% endif %}
         </div>
 
-        <!-- Tab: Trending -->
-        <div id="tab-trending" class="tab-content-pane" style="display:none;">
-            <div class="glass-card">
-                <h5><i class="bi bi-fire"></i> Trending Topics</h5>
-                <p class="text-secondary" style="font-size:0.85rem;">Hot topics from the last 24 hours, extracted from
-                    article titles.</p>
-                <div id="trendingTopics" class="mt-3">
-                    <div class="text-center py-3">
-                        <div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
-                        <small class="text-secondary ms-2">Loading trending topics...</small>
-                    </div>
-                </div>
-            </div>
-        </div>
 
-        <!-- Tab: Charts -->
-        <div id="tab-charts" class="tab-content-pane" style="display:none;">
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <div class="chart-container">
-                        <canvas id="sourceChart"></canvas>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="chart-container">
-                        <canvas id="categoryChart"></canvas>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="chart-container">
-                        <canvas id="sentimentChart"></canvas>
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="chart-container">
-                        <canvas id="dailyChart"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tab: Source Health -->
-        <div id="tab-health" class="tab-content-pane" style="display:none;">
-            <div class="glass-card">
-                <h5><i class="bi bi-heart-pulse"></i> Source Health Monitor</h5>
-                <p class="text-secondary mb-3" style="font-size:0.85rem;">Real-time status of all news sources.
-                    Background scraping runs every 15 minutes.</p>
-                <div id="healthCards" class="row g-2">
-                    {% if source_health %}
-                    {% for src in source_health %}
-                    <div class="col-md-4 col-6">
-                        <div class="glass-card text-center">
-                            <div>
-                                <span
-                                    class="health-dot {% if src.status == 'ok' %}health-ok{% elif src.status == 'error' %}health-error{% else %}health-idle{% endif %}"></span>
-                                <strong>{{ src.source }}</strong>
-                            </div>
-                            <small class="text-secondary">{{ src.article_count }} articles • {{ src.duration }}s</small>
-                            {% if src.last_error %}
-                            <br><small class="text-danger">{{ src.last_error[:50] }}</small>
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                    {% else %}
-                    <div class="col-12 text-center text-secondary py-3">
-                        <p>No health data yet. Run a scrape first.</p>
-                    </div>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
 
     </div>
 
@@ -1133,25 +981,7 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        // ── Tab Navigation ──
-        document.querySelectorAll('#mainTabs .nav-link').forEach(tab => {
-            tab.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = this.dataset.tab;
-
-                document.querySelectorAll('#mainTabs .nav-link').forEach(t => t.classList.remove('active'));
-                this.classList.add('active');
-
-                document.querySelectorAll('.tab-content-pane').forEach(p => p.style.display = 'none');
-                document.getElementById('tab-' + target).style.display = 'block';
-
-                // Load data on first open
-                if (target === 'trending') loadTrending();
-                if (target === 'charts') loadCharts();
-            });
-        });
 
         // ── Bookmark Toggle ──
         async function toggleBookmark(articleId, btn) {
@@ -1230,137 +1060,7 @@
             }
         }
 
-        // ── Trending Topics ──
-        let trendingLoaded = false;
-        async function loadTrending() {
-            if (trendingLoaded) return;
-            try {
-                const resp = await fetch('/api/trending');
-                const data = await resp.json();
-                const container = document.getElementById('trendingTopics');
-                if (data.topics && data.topics.length > 0) {
-                    container.innerHTML = data.topics.map(t =>
-                        `<span class="trending-pill" onclick="searchTopic('${t.topic}')">
-                            ${t.topic} <span class="trending-count">×${t.count}</span>
-                        </span>`
-                    ).join('');
-                } else {
-                    container.innerHTML = '<p class="text-secondary">No trending topics yet. Scrape some articles first!</p>';
-                }
-                trendingLoaded = true;
-            } catch (e) {
-                document.getElementById('trendingTopics').innerHTML = '<p class="text-danger">Failed to load trending topics.</p>';
-            }
-        }
 
-        function searchTopic(topic) {
-            window.location.href = `/?keyword=${encodeURIComponent(topic)}`;
-        }
-
-        // ── Charts ──
-        let chartsLoaded = false;
-        async function loadCharts() {
-            if (chartsLoaded) return;
-            try {
-                const resp = await fetch('/api/charts');
-                const data = await resp.json();
-
-                const colors = ['#f8fafc', '#e2e8f0', '#cbd5e1', '#94a3b8', '#64748b', '#475569', '#334155', '#1e293b'];
-
-                // Source chart
-                if (data.by_source) {
-                    new Chart(document.getElementById('sourceChart'), {
-                        type: 'doughnut',
-                        data: {
-                            labels: Object.keys(data.by_source),
-                            datasets: [{ data: Object.values(data.by_source), backgroundColor: colors }]
-                        },
-                        options: {
-                            responsive: true, maintainAspectRatio: false,
-                            plugins: {
-                                title: { display: true, text: 'Articles by Source', color: '#e8e8f0' },
-                                legend: { labels: { color: '#8888aa', font: { size: 11 } } }
-                            }
-                        }
-                    });
-                }
-
-                // Category chart
-                if (data.by_category) {
-                    new Chart(document.getElementById('categoryChart'), {
-                        type: 'bar',
-                        data: {
-                            labels: Object.keys(data.by_category),
-                            datasets: [{
-                                label: 'Count', data: Object.values(data.by_category),
-                                backgroundColor: 'rgba(255,255,255,0.1)', borderColor: '#f8fafc', borderWidth: 1
-                            }]
-                        },
-                        options: {
-                            responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-                            plugins: {
-                                title: { display: true, text: 'Articles by Category', color: '#e8e8f0' },
-                                legend: { display: false }
-                            },
-                            scales: {
-                                x: { ticks: { color: '#8888aa' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-                                y: { ticks: { color: '#8888aa' }, grid: { display: false } }
-                            }
-                        }
-                    });
-                }
-
-                // Sentiment chart
-                if (data.by_sentiment) {
-                    const sentColors = { positive: '#f8fafc', neutral: '#94a3b8', negative: '#475569' };
-                    new Chart(document.getElementById('sentimentChart'), {
-                        type: 'pie',
-                        data: {
-                            labels: Object.keys(data.by_sentiment),
-                            datasets: [{
-                                data: Object.values(data.by_sentiment),
-                                backgroundColor: Object.keys(data.by_sentiment).map(s => sentColors[s] || '#636e72')
-                            }]
-                        },
-                        options: {
-                            responsive: true, maintainAspectRatio: false,
-                            plugins: {
-                                title: { display: true, text: 'Sentiment Distribution', color: '#e8e8f0' },
-                                legend: { labels: { color: '#8888aa' } }
-                            }
-                        }
-                    });
-                }
-
-                // Daily chart
-                if (data.daily && data.daily.length > 0) {
-                    new Chart(document.getElementById('dailyChart'), {
-                        type: 'line',
-                        data: {
-                            labels: data.daily.map(d => d.day),
-                            datasets: [{
-                                label: 'Articles', data: data.daily.map(d => d.count),
-                                borderColor: '#f8fafc', backgroundColor: 'rgba(255,255,255,0.05)',
-                                fill: true, tension: 0.4
-                            }]
-                        },
-                        options: {
-                            responsive: true, maintainAspectRatio: false,
-                            plugins: {
-                                title: { display: true, text: 'Articles per Day (7 days)', color: '#e8e8f0' },
-                                legend: { display: false }
-                            },
-                            scales: {
-                                x: { ticks: { color: '#8888aa' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-                                y: { ticks: { color: '#8888aa' }, grid: { color: 'rgba(255,255,255,0.05)' } }
-                            }
-                        }
-                    });
-                }
-
-                chartsLoaded = true;
-            } catch (e) { console.error('Chart load failed:', e); }
-        }
 
         // ── Personalized Feed ──
         async function fetchPersonalized() {
