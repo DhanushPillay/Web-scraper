@@ -19,7 +19,6 @@ from flask import (Flask, render_template, request, Response,
                    stream_with_context, jsonify, send_file)
 from web_scraper import NewsAggregator
 from database import Database
-from utils.cluster_utils import NewsClusterer
 from newspaper import Article
 import nltk
 
@@ -290,12 +289,10 @@ def saved_articles():
     articles = db.get_articles(limit=per_page, offset=offset, saved_only=True)
     total = db.get_total_count(saved_only=True)
     total_pages = max(1, (total + per_page - 1) // per_page)
-
     stats = db.get_stats()
 
     return render_template('index.html',
-                           articles=[],
-                           clustered_articles=[articles],
+                           articles=articles,
                            stats=stats,
                            total_count=total,
                            page=page,
@@ -344,10 +341,6 @@ def index():
     total = db.get_total_count(source_filter=source_filter, keyword=keyword, category=category_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
 
-    # Apply Clustering
-    clusterer = NewsClusterer(similarity_threshold=0.2)
-    clustered_articles = clusterer.cluster_articles(articles)
-
     # Get stats
     stats = db.get_stats()
 
@@ -356,7 +349,6 @@ def index():
 
     return render_template('index.html',
                            articles=articles,
-                           clustered_articles=clustered_articles,
                            stats=stats,
                            total_count=total,
                            page=page,
@@ -425,27 +417,7 @@ def api_search() -> Response:
     return jsonify({'results': results, 'count': len(results)})
 
 
-@app.route('/api/trending')
-def api_trending() -> Response:
-    """Returns trending topics from recent articles."""
-    title_rows = db.get_trending_words()
-    titles = [row.get('title', '') for row in title_rows]
-    topics = extract_trending_topics(titles, limit=12)
-    return jsonify({'topics': topics})
 
-
-@app.route('/api/charts')
-def api_charts() -> Response:
-    """Returns chart data for the dashboard."""
-    stats = db.get_stats()
-    daily = db.get_articles_per_day(days=7)
-
-    return jsonify({
-        'by_source': stats.get('by_source', {}),
-        'by_category': stats.get('by_category', {}),
-        'by_sentiment': stats.get('by_sentiment', {}),
-        'daily': daily
-    })
 
 
 @app.route('/api/health')
