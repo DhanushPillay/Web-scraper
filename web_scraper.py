@@ -8,7 +8,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import feedparser
-import csv
 import time
 import logging
 from abc import ABC, abstractmethod
@@ -22,7 +21,6 @@ class BaseScraper(ABC):
     """Abstract base class for all news scrapers."""
 
     def __init__(self) -> None:
-        self.articles: list[dict] = []
         self.headers: dict[str, str] = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
@@ -40,11 +38,8 @@ class BaseScraper(ABC):
         self.scrape_duration: float = 0
 
     @abstractmethod
-    def scrape(self, num_pages: int = 1) -> None:
+    def scrape(self, num_pages: int = 1) -> list[dict]:
         pass
-
-    def get_articles(self) -> list[dict]:
-        return self.articles
 
     def get_health(self) -> dict:
         return {
@@ -52,7 +47,6 @@ class BaseScraper(ABC):
             'status': self.last_status,
             'last_scrape': self.last_scrape_time,
             'duration': round(self.scrape_duration, 2),
-            'article_count': len(self.articles),
             'last_error': self.last_error
         }
 
@@ -66,9 +60,9 @@ class HackerNewsScraper(BaseScraper):
         self.feed_url: str = "https://hnrss.org/frontpage?count=30"
         self.fallback_url: str = "https://news.ycombinator.com/news"
 
-    def scrape(self, num_pages: int = 1) -> None:
+    def scrape(self, num_pages: int = 1) -> list[dict]:
         start = time.time()
-        self.articles = []
+        articles = []
         logger.info("[HN] Starting RSS scrape...")
         try:
             # Try RSS first (much faster)
@@ -104,7 +98,7 @@ class HackerNewsScraper(BaseScraper):
                     if hasattr(entry, 'author'):
                         author = entry.author
 
-                    self.articles.append({
+                    articles.append({
                         'title': entry.title,
                         'link': entry.link,
                         'score': score,
@@ -117,23 +111,25 @@ class HackerNewsScraper(BaseScraper):
             else:
                 # Fallback to HTML scraping if RSS fails
                 logger.warning("[HN] RSS empty, falling back to HTML scrape")
-                self._scrape_html(num_pages)
+                articles = self._scrape_html(num_pages)
         except Exception as e:
             logger.warning(f"[HN] RSS failed ({e}), falling back to HTML")
-            self._scrape_html(num_pages)
+            articles = self._scrape_html(num_pages)
 
         self.scrape_duration = time.time() - start
         self.last_scrape_time = time.time()
-        logger.info(f"[HN] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+        logger.info(f"[HN] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
+        return articles
 
-    def _scrape_html(self, num_pages: int) -> None:
+    def _scrape_html(self, num_pages: int) -> list[dict]:
         """Fallback HTML scraper for Hacker News."""
+        articles = []
         try:
             for p in range(1, num_pages + 1):
                 url = f"{self.fallback_url}?p={p}"
                 response = self.session.get(url, timeout=10)
                 if response.status_code == 200:
-                    self._parse_html(response.text)
+                    articles.extend(self._parse_html(response.text))
                 if p < num_pages:
                     time.sleep(1)
             self.last_status = "ok"
@@ -141,8 +137,10 @@ class HackerNewsScraper(BaseScraper):
             self.last_status = "error"
             self.last_error = str(e)
             logger.warning(f"[HN] HTML fallback failed: {e}")
+        return articles
 
-    def _parse_html(self, html_content: str) -> None:
+    def _parse_html(self, html_content: str) -> list[dict]:
+        articles = []
         soup = BeautifulSoup(html_content, 'html.parser')
         story_rows = soup.find_all('tr', class_='athing')
 
@@ -183,7 +181,7 @@ class HackerNewsScraper(BaseScraper):
                                 comments = "0"
                             break
 
-                self.articles.append({
+                articles.append({
                     'title': title,
                     'link': link,
                     'score': score,
@@ -194,6 +192,7 @@ class HackerNewsScraper(BaseScraper):
                 })
             except (AttributeError, ValueError):
                 continue
+        return articles
 
 
 class TechCrunchScraper(BaseScraper):
@@ -203,9 +202,9 @@ class TechCrunchScraper(BaseScraper):
         super().__init__()
         self.feed_url: str = "https://techcrunch.com/feed/"
 
-    def scrape(self, num_pages: int = 1) -> None:
+    def scrape(self, num_pages: int = 1) -> list[dict]:
         start = time.time()
-        self.articles = []
+        articles = []
         logger.info("[TC] Starting RSS scrape...")
         try:
             feed = feedparser.parse(self.feed_url)
@@ -218,7 +217,7 @@ class TechCrunchScraper(BaseScraper):
                 if hasattr(entry, 'published'):
                     time_posted = entry.published
 
-                self.articles.append({
+                articles.append({
                     'title': entry.title,
                     'link': entry.link,
                     'score': 0,
@@ -235,7 +234,8 @@ class TechCrunchScraper(BaseScraper):
 
         self.scrape_duration = time.time() - start
         self.last_scrape_time = time.time()
-        logger.info(f"[TC] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+        logger.info(f"[TC] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
+        return articles
 
 
 class RedditScraper(BaseScraper):
@@ -245,9 +245,9 @@ class RedditScraper(BaseScraper):
         super().__init__()
         self.base_url: str = "https://www.reddit.com/r/technology/top.json?t=day&limit=25"
 
-    def scrape(self, num_pages: int = 1) -> None:
+    def scrape(self, num_pages: int = 1) -> list[dict]:
         start = time.time()
-        self.articles = []
+        articles = []
         logger.info("[Reddit] Starting JSON scrape...")
         try:
             response = self.session.get(self.base_url, timeout=10)
@@ -257,7 +257,7 @@ class RedditScraper(BaseScraper):
 
                 for post in children:
                     p_data = post.get('data', {})
-                    self.articles.append({
+                    articles.append({
                         'title': p_data.get('title'),
                         'link': p_data.get('url'),
                         'score': p_data.get('score', 0),
@@ -274,7 +274,8 @@ class RedditScraper(BaseScraper):
 
         self.scrape_duration = time.time() - start
         self.last_scrape_time = time.time()
-        logger.info(f"[Reddit] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+        logger.info(f"[Reddit] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
+        return articles
 
 
 class TheVergeScraper(BaseScraper):
@@ -284,9 +285,9 @@ class TheVergeScraper(BaseScraper):
         super().__init__()
         self.feed_url: str = "https://www.theverge.com/rss/index.xml"
 
-    def scrape(self, num_pages: int = 1) -> None:
+    def scrape(self, num_pages: int = 1) -> list[dict]:
         start = time.time()
-        self.articles = []
+        articles = []
         logger.info("[Verge] Starting RSS scrape...")
         try:
             feed = feedparser.parse(self.feed_url)
@@ -299,7 +300,7 @@ class TheVergeScraper(BaseScraper):
                 if hasattr(entry, 'published'):
                     time_posted = entry.published
 
-                self.articles.append({
+                articles.append({
                     'title': entry.title,
                     'link': entry.link,
                     'score': 0,
@@ -316,7 +317,8 @@ class TheVergeScraper(BaseScraper):
 
         self.scrape_duration = time.time() - start
         self.last_scrape_time = time.time()
-        logger.info(f"[Verge] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+        logger.info(f"[Verge] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
+        return articles
 
 
 class ArsTechnicaScraper(BaseScraper):
@@ -326,9 +328,9 @@ class ArsTechnicaScraper(BaseScraper):
         super().__init__()
         self.feed_url: str = "https://feeds.arstechnica.com/arstechnica/index"
 
-    def scrape(self, num_pages: int = 1) -> None:
+    def scrape(self, num_pages: int = 1) -> list[dict]:
         start = time.time()
-        self.articles = []
+        articles = []
         logger.info("[Ars] Starting RSS scrape...")
         try:
             feed = feedparser.parse(self.feed_url)
@@ -341,7 +343,7 @@ class ArsTechnicaScraper(BaseScraper):
                 if hasattr(entry, 'published'):
                     time_posted = entry.published
 
-                self.articles.append({
+                articles.append({
                     'title': entry.title,
                     'link': entry.link,
                     'score': 0,
@@ -358,7 +360,8 @@ class ArsTechnicaScraper(BaseScraper):
 
         self.scrape_duration = time.time() - start
         self.last_scrape_time = time.time()
-        logger.info(f"[Ars] Done. {len(self.articles)} articles in {self.scrape_duration:.1f}s")
+        logger.info(f"[Ars] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
+        return articles
 
 
 class NewsAggregator:
@@ -394,13 +397,11 @@ class NewsAggregator:
 
             for future in as_completed(futures):
                 try:
-                    future.result()
+                    result = future.result()
+                    if result:
+                        self.articles.extend(result)
                 except Exception as e:
                     logger.error(f"Scraper thread failed: {e}")
-
-        # Collect results from all scrapers
-        for scraper in self.scrapers:
-            self.articles.extend(scraper.get_articles())
 
         self._last_scrape_time = time.time()
         logger.info(f"Total articles scraped: {len(self.articles)}")
@@ -411,43 +412,3 @@ class NewsAggregator:
     def get_health(self) -> list[dict]:
         """Returns health status of all scrapers."""
         return [s.get_health() for s in self.scrapers]
-
-    def filter_by_keyword(self, articles: list[dict], keyword: str) -> list[dict]:
-        if not keyword:
-            return articles
-        return [art for art in articles if keyword.lower() in art['title'].lower()]
-
-    def save_to_csv(self, filename: str = "tech_news.csv") -> None:
-        if not self.articles:
-            logger.info("No data to save.")
-            return
-        try:
-            with open(filename, mode='w', newline='', encoding='utf-8') as file:
-                writer = csv.DictWriter(file, fieldnames=["title", "score", "link", "author", "time", "comments", "source"])
-                writer.writeheader()
-                writer.writerows(self.articles)
-            logger.info(f"Data successfully saved to {filename}")
-        except (IOError, OSError) as e:
-            logger.error(f"Error saving file: {e}")
-
-
-# Legacy support for main execution
-def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-    agg = NewsAggregator()
-    print("Scraping all sources...")
-    agg.scrape_all(hn_pages=2)
-
-    sorted_arts = sorted(agg.articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
-
-    print(f"\nTotal articles: {len(sorted_arts)}")
-    print("-" * 80)
-    print(f"{'SOURCE':<12} | {'SCORE':<5} | {'TITLE'}")
-    print("-" * 80)
-
-    for art in sorted_arts[:20]:
-        print(f"{art['source'][:12]:<12} | {str(art['score']):<5} | {art['title'][:60]}")
-
-
-if __name__ == "__main__":
-    main()
