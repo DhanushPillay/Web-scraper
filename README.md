@@ -23,6 +23,7 @@ A modern, professional web application for aggregating and viewing technology ne
 
 ### 💾 Data Management
 - **SQLite Database**: Persistent storage for all articles
+- **FTS5 Full-Text Search**: O(1) text search implemented using SQLite's FTS5 extension.
 - **Automatic Deduplication**: Prevents duplicate articles
 - **Bookmark System**: Save articles for later reading
 - **Advanced Filtering**: Filter by source, keyword, or view saved articles only
