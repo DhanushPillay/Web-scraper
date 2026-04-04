@@ -15,6 +15,7 @@ A modern, professional web application for aggregating and viewing technology ne
 - **The Verge**: Tech culture and product reviews
 - **Ars Technica**: In-depth technical analysis
 - **High-Performance Concurrency**: Scraping engine uses `concurrent.futures.ThreadPoolExecutor` to fetch from all sources simultaneously.
+- **Resilient Network Connections**: Implements `urllib3.util.retry.Retry` with exponential backoff to recover from transient HTTP failures.
 
 ### 📊 Dashboard & Analytics
 - **Real-time Statistics**: Total articles, new today, saved count, top source
