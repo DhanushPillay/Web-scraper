@@ -29,13 +29,14 @@ A modern, professional web application for aggregating and viewing technology ne
 - **Advanced Filtering**: Filter by source, keyword, or view saved articles only
 - **Sorting Options**: Sort by score, comments, or recency
 
-### 🎨 Modern Interface
+### 🎨 Modern Interface & AI NLP Data Enrichment
 - **Clean Design**: Professional SaaS-style dashboard
 - **Monochrome Theme**: Professional black/gray/white interface (no distractions)
 - **Responsive Layout**: Works on desktop and mobile
-- **AI Summarization**: Popup modal with article summaries
-- **CSV Export**: Download filtered results for analysis
-- **Sentiment Analysis**: AI-powered sentiment detection (Positive/Negative/Neutral)
+- **AI Summarization**: Extractive summarization via `newspaper3k`
+- **CSV Export**: Streamed download of high-volume datasets via Flask's `stream_with_context`
+- **Sentiment Analysis**: NLTK VADER sentiment compound scoring (Positive/Negative/Neutral)
+- **Trending Topics**: TF-IDF alternatives extracting contextually relevant bigrams
 
 ### 📧 Email Digest (Beta)
 - Subscribe to daily news updates (skeleton implementation)
