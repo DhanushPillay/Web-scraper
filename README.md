@@ -14,6 +14,7 @@ A modern, professional web application for aggregating and viewing technology ne
 - **Reddit** (r/technology): Community-driven discussions
 - **The Verge**: Tech culture and product reviews
 - **Ars Technica**: In-depth technical analysis
+- **High-Performance Concurrency**: Scraping engine uses `concurrent.futures.ThreadPoolExecutor` to fetch from all sources simultaneously.
 
 ### 📊 Dashboard & Analytics
 - **Real-time Statistics**: Total articles, new today, saved count, top source
