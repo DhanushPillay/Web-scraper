@@ -90,13 +90,15 @@ Open [http://127.0.0.1:5000/](http://127.0.0.1:5000/) in your browser.
 
 ```
 Web-scraper/
-├── app.py              # Flask application (routes, API endpoints)
-├── web_scraper.py      # Scraping logic (BaseScraper pattern)
-├── database.py         # SQLite database management
+├── app.py              # Flask application with background metadata/scheduling loops
+├── web_scraper.py      # Scraping logic (BaseScraper pattern with caching)
+├── database.py         # SQLite database management with idempotent migrations
 ├── templates/
 │   └── index.html      # Modern SaaS dashboard UI
 ├── technews.db         # SQLite database (auto-generated)
-└── requirements.txt    # Python dependencies
+├── requirements.txt    # Python dependencies
+└── doc/
+    └── project_explanation.md # Deep Technical Architecture documentation
 ```
 
 ## Database Schema
