@@ -21,7 +21,8 @@ class Database:
     @contextmanager
     def get_connection(self):
         """Context manager that auto-closes the DB connection."""
-        conn = sqlite3.connect(self.db_name)
+        conn = sqlite3.connect(self.db_name, timeout=15)
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -50,7 +51,8 @@ class Database:
                     sentiment TEXT DEFAULT 'neutral',
                     sentiment_score REAL DEFAULT 0.0,
                     category TEXT DEFAULT 'general',
-                    read_time INTEGER DEFAULT 0
+                    read_time INTEGER DEFAULT 0,
+                    metadata_processed_at REAL
                 )
             ''')
 
@@ -62,6 +64,7 @@ class Database:
                 ("sentiment_score", "REAL DEFAULT 0.0"),
                 ("category", "TEXT DEFAULT 'general'"),
                 ("read_time", "INTEGER DEFAULT 0"),
+                ("metadata_processed_at", "REAL"),
             ]
             for col_name, col_type in migrations:
                 try:
@@ -121,8 +124,9 @@ class Database:
                 cursor.executemany('''
                     INSERT OR IGNORE INTO articles
                     (title, link, score, author, time_posted, comments, source, created_at,
-                     is_saved, is_read, sentiment, sentiment_score, category, read_time)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'neutral', 0.0, 'general', 0)
+                     is_saved, is_read, sentiment, sentiment_score, category, read_time,
+                     metadata_processed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'neutral', 0.0, 'general', 0, NULL)
                 ''', [
                     (
                         a.get('title'), a.get('link'), a.get('score', 0),
@@ -145,7 +149,8 @@ class Database:
 
     def get_articles(self, limit: int = 30, offset: int = 0, source_filter: str = 'all',
                      keyword: str = '', saved_only: bool = False,
-                     unread_only: bool = False, category: str = '') -> List[Dict[str, Any]]:
+                     unread_only: bool = False, category: str = '',
+                     sort_by: str = 'newest') -> List[Dict[str, Any]]:
         """Retrieves articles with optional filtering and pagination."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -171,7 +176,17 @@ class Database:
                 query += " AND category = ?"
                 params.append(category)
 
-            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            order_by = "created_at DESC"
+            sort_key = (sort_by or 'newest').lower()
+            if sort_key == 'score':
+                order_by = "CAST(score AS INTEGER) DESC, created_at DESC"
+            elif sort_key == 'comments':
+                order_by = (
+                    "CASE WHEN comments GLOB '[0-9]*' THEN CAST(comments AS INTEGER) "
+                    "ELSE 0 END DESC, created_at DESC"
+                )
+
+            query += f" ORDER BY {order_by} LIMIT ? OFFSET ?"
             params.extend([limit, offset])
 
             cursor.execute(query, params)
@@ -234,43 +249,45 @@ class Database:
             except sqlite3.OperationalError as e:
                 logger.warning(f"FTS search error: {e}")
                 # Fallback to LIKE search
-                return self.get_articles(limit=limit, keyword=query)
+                return self.get_articles(limit=limit, keyword=query, sort_by='newest')
 
     # ──────────────────────────────────────────────
     # Bookmarks & Reading List
     # ──────────────────────────────────────────────
 
-    def toggle_bookmark(self, article_id: int) -> bool:
+    def toggle_bookmark(self, article_id: int) -> Optional[bool]:
         """Toggles the bookmark status of an article."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT is_saved FROM articles WHERE id = ?", (article_id,))
             result = cursor.fetchone()
 
-            new_status = False
-            if result:
-                current_status = result['is_saved']
-                new_status = not current_status
-                cursor.execute("UPDATE articles SET is_saved = ? WHERE id = ?", (int(new_status), article_id))
-                conn.commit()
+            if not result:
+                return None
 
-            return new_status
+            current_status = result['is_saved']
+            new_status = not current_status
+            cursor.execute("UPDATE articles SET is_saved = ? WHERE id = ?", (int(new_status), article_id))
+            conn.commit()
 
-    def toggle_read(self, article_id: int) -> bool:
+            return bool(new_status)
+
+    def toggle_read(self, article_id: int) -> Optional[bool]:
         """Toggles the read status of an article."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT is_read FROM articles WHERE id = ?", (article_id,))
             result = cursor.fetchone()
 
-            new_status = False
-            if result:
-                current_status = result['is_read']
-                new_status = not current_status
-                cursor.execute("UPDATE articles SET is_read = ? WHERE id = ?", (int(new_status), article_id))
-                conn.commit()
+            if not result:
+                return None
 
-            return new_status
+            current_status = result['is_read']
+            new_status = not current_status
+            cursor.execute("UPDATE articles SET is_read = ? WHERE id = ?", (int(new_status), article_id))
+            conn.commit()
+
+            return bool(new_status)
 
     # ──────────────────────────────────────────────
     # Sentiment & Category Updates
@@ -278,7 +295,8 @@ class Database:
 
     def update_article_metadata(self, article_id: int, sentiment: str = None,
                                  sentiment_score: float = None, category: str = None,
-                                 read_time: int = None) -> None:
+                                 read_time: int = None,
+                                 metadata_processed_at: float = None) -> None:
         """Updates article metadata (sentiment, category, read_time)."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -297,6 +315,9 @@ class Database:
             if read_time is not None:
                 updates.append("read_time = ?")
                 params.append(read_time)
+            if metadata_processed_at is not None:
+                updates.append("metadata_processed_at = ?")
+                params.append(metadata_processed_at)
 
             if updates:
                 params.append(article_id)
@@ -309,7 +330,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT * FROM articles
-                WHERE sentiment = 'neutral' AND category = 'general'
+                WHERE metadata_processed_at IS NULL
                 ORDER BY created_at DESC LIMIT ?
             ''', (limit,))
             rows = cursor.fetchall()
