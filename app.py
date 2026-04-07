@@ -11,12 +11,17 @@ import csv
 import json
 import logging
 import smtplib
+import atexit
+import socket
+import ipaddress
 from email.mime.text import MIMEText
 from collections import Counter
 from urllib.parse import urlparse
+from typing import Any, Optional, Union, cast
 
 from flask import (Flask, render_template, request, Response,
                    stream_with_context, jsonify, send_file)
+from flask.typing import ResponseReturnValue
 from web_scraper import NewsAggregator
 from database import Database
 from newspaper import Article
@@ -55,31 +60,156 @@ aggregator = NewsAggregator()
 # Helpers
 # ──────────────────────────────────────────────
 
-def sort_articles(articles: list[dict], sort_by: str) -> list[dict]:
-    """Sort articles by the given criteria. Extracted to avoid duplication."""
-    if sort_by == 'comments':
-        return sorted(articles, key=lambda x: int(x['comments']) if str(x['comments']).isdigit() else 0, reverse=True)
-    elif sort_by == 'score':
-        return sorted(articles, key=lambda x: x['score'] if isinstance(x['score'], int) else 0, reverse=True)
-    return articles
+MAX_SCRAPE_PAGES = 5
+MAX_PAGE_NUMBER = 1000
+MAX_KEYWORD_LENGTH = 120
+MAX_SEARCH_QUERY_LENGTH = 100
+
+ALLOWED_SORT_OPTIONS = {'score', 'comments', 'newest'}
+ALLOWED_SOURCE_FILTERS = {'all', 'Hacker News', 'TechCrunch', 'Reddit', 'The Verge', 'Ars Technica'}
+
+KEYWORD_REGEX = re.compile(r"^[\w\s\-\.\+#&',:()]*$")
+
+
+def parse_bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    """Parses and clamps an int value to a safe range."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def sanitize_keyword(keyword: str) -> str:
+    """Sanitizes keyword input to avoid malformed queries."""
+    cleaned = (keyword or '').strip()
+    if not cleaned:
+        return ''
+
+    if len(cleaned) > MAX_KEYWORD_LENGTH:
+        cleaned = cleaned[:MAX_KEYWORD_LENGTH]
+
+    if not KEYWORD_REGEX.fullmatch(cleaned):
+        logger.warning("Rejected keyword with invalid characters")
+        return ''
+
+    return cleaned
+
+
+def sanitize_search_query(query: str) -> str:
+    """Sanitizes full-text search query input."""
+    cleaned = (query or '').strip()
+    if not cleaned:
+        return ''
+
+    if len(cleaned) > MAX_SEARCH_QUERY_LENGTH:
+        cleaned = cleaned[:MAX_SEARCH_QUERY_LENGTH]
+
+    if any(ord(char) < 32 for char in cleaned):
+        logger.warning("Rejected search query with control characters")
+        return ''
+
+    return cleaned
+
+
+def normalize_sort_by(sort_by: str) -> str:
+    value = (sort_by or '').strip().lower()
+    return value if value in ALLOWED_SORT_OPTIONS else 'score'
+
+
+def normalize_source_filter(source: str) -> str:
+    value = (source or '').strip()
+    return value if value in ALLOWED_SOURCE_FILTERS else 'all'
+
+
+def parse_positive_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def get_json_payload() -> Optional[dict[str, Any]]:
+    """Safely parses a JSON body and returns None for malformed payloads."""
+    data = request.get_json(silent=True)
+    if isinstance(data, dict):
+        return cast(dict[str, Any], data)
+    return None
 
 
 EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
 
 def is_valid_email(email: str) -> bool:
-    return bool(EMAIL_REGEX.match(email))
+    if not email or len(email) > 254:
+        return False
+    if '\n' in email or '\r' in email:
+        return False
+    return bool(EMAIL_REGEX.fullmatch(email))
 
 
-BLOCKED_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254'}
+BLOCKED_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254', '::1'}
+
+IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+
+
+def _is_disallowed_ip(address: IPAddress) -> bool:
+    return (
+        address.is_private or
+        address.is_loopback or
+        address.is_link_local or
+        address.is_multicast or
+        address.is_reserved or
+        address.is_unspecified
+    )
+
+
+def _resolves_to_disallowed_ip(hostname: str) -> bool:
+    try:
+        records = socket.getaddrinfo(hostname, None)
+    except Exception:
+        return True
+
+    for record in records:
+        ip_value = record[4][0]
+        try:
+            parsed_ip = ipaddress.ip_address(ip_value)
+        except ValueError:
+            continue
+
+        if _is_disallowed_ip(parsed_ip):
+            return True
+
+    return False
 
 
 def is_safe_url(url: str) -> bool:
-    parsed = urlparse(url)
+    parsed = urlparse((url or '').strip())
     if parsed.scheme not in ('http', 'https'):
         return False
-    if parsed.hostname in BLOCKED_HOSTS:
+
+    if not parsed.netloc or parsed.username or parsed.password:
         return False
+
+    hostname = (parsed.hostname or '').strip().lower().rstrip('.')
+    if not hostname:
+        return False
+
+    if hostname in BLOCKED_HOSTS or hostname.endswith('.localhost'):
+        return False
+
+    try:
+        address = ipaddress.ip_address(hostname)
+        if _is_disallowed_ip(address):
+            return False
+    except ValueError:
+        if _resolves_to_disallowed_ip(hostname):
+            return False
+
+    if parsed.port and parsed.port not in (80, 443):
+        return False
+
     return True
 
 
@@ -106,6 +236,15 @@ CATEGORY_KEYWORDS = {
     'Social Media': ['twitter', 'facebook', 'instagram', 'tiktok', 'youtube', 'reddit',
                      'social media', 'meta', 'bluesky', 'mastodon', 'threads'],
 }
+
+CATEGORY_FILTER_LOOKUP = {'all': 'all', 'general': 'general'}
+for _category in CATEGORY_KEYWORDS:
+    CATEGORY_FILTER_LOOKUP[_category.lower()] = _category
+
+
+def normalize_category_filter(category: str) -> str:
+    value = (category or '').strip().lower()
+    return CATEGORY_FILTER_LOOKUP.get(value, 'all')
 
 
 def classify_article(title: str) -> str:
@@ -213,6 +352,7 @@ def extract_trending_topics(titles: list[str], limit: int = 10) -> list[dict]:
 def process_articles_metadata():
     """Background job: assigns sentiment, category, and read time to unprocessed articles."""
     unprocessed = db.get_unprocessed_articles(limit=100)
+    processed_at = time.time()
     for article in unprocessed:
         title = article.get('title', '')
         sentiment = analyze_sentiment(title)
@@ -224,7 +364,8 @@ def process_articles_metadata():
             sentiment=sentiment['label'],
             sentiment_score=sentiment['score'],
             category=category,
-            read_time=read_time
+            read_time=read_time,
+            metadata_processed_at=processed_at
         )
     if unprocessed:
         logger.info(f"Processed metadata for {len(unprocessed)} articles")
@@ -250,13 +391,12 @@ def background_scrape():
 # ──────────────────────────────────────────────
 
 @app.route('/download')
-def download_csv() -> Response:
+def download_csv() -> ResponseReturnValue:
     """Generates and downloads a CSV file of the articles."""
-    sort_by = request.args.get('sort', 'score')
-    keyword = request.args.get('keyword', '')
+    sort_by = normalize_sort_by(request.args.get('sort', 'score'))
+    keyword = sanitize_keyword(request.args.get('keyword', ''))
 
-    articles = db.get_articles(limit=500, keyword=keyword)
-    articles = sort_articles(articles, sort_by)
+    articles = db.get_articles(limit=500, keyword=keyword, sort_by=sort_by)
 
     def generate():
         output = io.StringIO()
@@ -282,11 +422,12 @@ def download_csv() -> Response:
 @app.route('/saved')
 def saved_articles():
     """Shows only bookmarked articles."""
-    page = request.args.get('page', 1, type=int)
+    page = parse_bounded_int(request.args.get('page', 1), default=1, minimum=1, maximum=MAX_PAGE_NUMBER)
+    sort_by = normalize_sort_by(request.args.get('sort', 'newest'))
     per_page = 30
     offset = (page - 1) * per_page
 
-    articles = db.get_articles(limit=per_page, offset=offset, saved_only=True)
+    articles = db.get_articles(limit=per_page, offset=offset, saved_only=True, sort_by=sort_by)
     total = db.get_total_count(saved_only=True)
     total_pages = max(1, (total + per_page - 1) // per_page)
     stats = db.get_stats()
@@ -297,18 +438,24 @@ def saved_articles():
                            total_count=total,
                            page=page,
                            total_pages=total_pages,
-                           showing_saved=True)
+                           showing_saved=True,
+                           sort_by=sort_by)
 
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     """Main dashboard route with scraping, filtering, and pagination."""
-    keyword = request.form.get('keyword', request.args.get('keyword', ''))
-    pages = request.form.get('pages', request.args.get('pages', 1, type=int), type=int)
-    sort_by = request.form.get('sort', request.args.get('sort', 'score'))
-    source_filter = request.form.get('source', request.args.get('source', 'all'))
-    category_filter = request.args.get('category', 'all')
-    page = request.args.get('page', 1, type=int)
+    keyword = sanitize_keyword(request.form.get('keyword', request.args.get('keyword', '')))
+    pages = parse_bounded_int(
+        request.form.get('pages', request.args.get('pages', 1)),
+        default=1,
+        minimum=1,
+        maximum=MAX_SCRAPE_PAGES
+    )
+    sort_by = normalize_sort_by(request.form.get('sort', request.args.get('sort', 'score')))
+    source_filter = normalize_source_filter(request.form.get('source', request.args.get('source', 'all')))
+    category_filter = normalize_category_filter(request.args.get('category', 'all'))
+    page = parse_bounded_int(request.args.get('page', 1), default=1, minimum=1, maximum=MAX_PAGE_NUMBER)
     per_page = 30
     offset = (page - 1) * per_page
 
@@ -334,9 +481,9 @@ def index():
     articles = db.get_articles(
         limit=per_page, offset=offset,
         source_filter=source_filter, keyword=keyword,
-        category=category_filter
+        category=category_filter,
+        sort_by=sort_by
     )
-    articles = sort_articles(articles, sort_by)
 
     total = db.get_total_count(source_filter=source_filter, keyword=keyword, category=category_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
@@ -366,31 +513,48 @@ def index():
 # ──────────────────────────────────────────────
 
 @app.route('/bookmark', methods=['POST'])
-def bookmark() -> Response:
+def bookmark() -> ResponseReturnValue:
     """Toggles article bookmark status."""
-    data = request.get_json()
-    article_id = data.get('article_id')
-    if article_id:
-        new_status = db.toggle_bookmark(article_id)
-        return jsonify({'status': 'saved' if new_status else 'removed'})
-    return jsonify({'error': 'Missing article_id'}), 400
+    data = get_json_payload()
+    if data is None:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+
+    article_id = parse_positive_int(data.get('article_id'))
+    if article_id is None:
+        return jsonify({'error': 'Valid article_id is required'}), 400
+
+    new_status = db.toggle_bookmark(article_id)
+    if new_status is None:
+        return jsonify({'error': 'Article not found'}), 404
+
+    return jsonify({'status': 'saved' if new_status else 'removed'})
 
 
 @app.route('/toggle_read', methods=['POST'])
-def toggle_read() -> Response:
+def toggle_read() -> ResponseReturnValue:
     """Toggles article read status."""
-    data = request.get_json()
-    article_id = data.get('article_id')
-    if article_id:
-        new_status = db.toggle_read(article_id)
-        return jsonify({'status': 'read' if new_status else 'unread'})
-    return jsonify({'error': 'Missing article_id'}), 400
+    data = get_json_payload()
+    if data is None:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+
+    article_id = parse_positive_int(data.get('article_id'))
+    if article_id is None:
+        return jsonify({'error': 'Valid article_id is required'}), 400
+
+    new_status = db.toggle_read(article_id)
+    if new_status is None:
+        return jsonify({'error': 'Article not found'}), 404
+
+    return jsonify({'status': 'read' if new_status else 'unread'})
 
 
 @app.route('/subscribe', methods=['POST'])
-def subscribe() -> Response:
+def subscribe() -> ResponseReturnValue:
     """Handle email subscription."""
-    data = request.get_json()
+    data = get_json_payload()
+    if data is None:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+
     email = data.get('email', '').strip()
     if not email or not is_valid_email(email):
         return jsonify({'error': 'Please enter a valid email address'}), 400
@@ -400,16 +564,16 @@ def subscribe() -> Response:
 
 
 @app.route('/api/stats')
-def api_stats() -> Response:
+def api_stats() -> ResponseReturnValue:
     """API endpoint for dashboard statistics."""
     stats = db.get_stats()
     return jsonify(stats)
 
 
 @app.route('/api/search')
-def api_search() -> Response:
+def api_search() -> ResponseReturnValue:
     """Full-text search endpoint using FTS5."""
-    query = request.args.get('q', '').strip()
+    query = sanitize_search_query(request.args.get('q', ''))
     if not query:
         return jsonify({'error': 'Search query required'}), 400
 
@@ -421,26 +585,32 @@ def api_search() -> Response:
 
 
 @app.route('/api/health')
-def api_health() -> Response:
+def api_health() -> ResponseReturnValue:
     """Returns scraper health status for all sources."""
     return jsonify({'sources': aggregator.get_health()})
 
 
 @app.route('/api/personalized')
-def api_personalized() -> Response:
+def api_personalized() -> ResponseReturnValue:
     """Returns personalized feed based on user bookmarks."""
     articles = db.get_personalized_feed(limit=30)
     return jsonify({'articles': articles})
 
 
 @app.route('/api/summarize', methods=['POST'])
-def summarize() -> Response:
+def summarize() -> ResponseReturnValue:
     """Summarizes a given URL using newspaper3k."""
-    data = request.get_json()
+    data = get_json_payload()
+    if data is None:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+
     url = data.get('url', '').strip()
 
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
+
+    if len(url) > 2048:
+        return jsonify({'error': 'URL is too long'}), 400
 
     if not is_safe_url(url):
         return jsonify({'error': 'URL not allowed'}), 400
@@ -462,7 +632,7 @@ def summarize() -> Response:
 
 
 @app.route('/export/json')
-def export_json() -> Response:
+def export_json() -> ResponseReturnValue:
     """Exports bookmarked articles as JSON download."""
     json_data = db.export_bookmarks_json()
     return Response(json_data, mimetype='application/json',
@@ -470,7 +640,7 @@ def export_json() -> Response:
 
 
 @app.route('/export/markdown')
-def export_markdown() -> Response:
+def export_markdown() -> ResponseReturnValue:
     """Exports bookmarked articles as Markdown download."""
     md_data = db.export_bookmarks_markdown()
     return Response(md_data, mimetype='text/markdown',
@@ -478,7 +648,7 @@ def export_markdown() -> Response:
 
 
 @app.route('/api/webhook/test', methods=['POST'])
-def test_webhook() -> Response:
+def test_webhook() -> ResponseReturnValue:
     """Tests a webhook by sending a sample payload.
     Configure WEBHOOK_URL environment variable to use."""
     import requests as req
@@ -486,6 +656,9 @@ def test_webhook() -> Response:
     webhook_url = os.getenv('WEBHOOK_URL', '').strip()
     if not webhook_url:
         return jsonify({'error': 'No WEBHOOK_URL configured. Set it as an environment variable.'}), 400
+
+    if not is_safe_url(webhook_url):
+        return jsonify({'error': 'Configured WEBHOOK_URL is invalid or not allowed.'}), 400
 
     stats = db.get_stats()
     payload = {
@@ -506,7 +679,7 @@ def test_webhook() -> Response:
 
 
 @app.route('/api/email/digest', methods=['POST'])
-def send_email_digest() -> Response:
+def send_email_digest() -> ResponseReturnValue:
     """Sends an email digest of top articles.
     Configure SMTP_* environment variables to use."""
     smtp_host = os.getenv('SMTP_HOST', '')
@@ -520,7 +693,10 @@ def send_email_digest() -> Response:
             'hint': 'Example: set SMTP_HOST=smtp.gmail.com'
         }), 400
 
-    data = request.get_json()
+    data = get_json_payload()
+    if data is None:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+
     recipient = data.get('email', '').strip()
     if not recipient or not is_valid_email(recipient):
         return jsonify({'error': 'Valid recipient email required'}), 400
@@ -579,12 +755,36 @@ def service_worker():
 # Start Background Scheduler
 # ──────────────────────────────────────────────
 
-if _scheduler_available:
+scheduler = None
+
+
+def stop_scheduler() -> None:
+    global scheduler
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=False)
+        logger.info("Background scheduler stopped")
+
+
+def start_scheduler() -> None:
+    """Starts scheduler once and avoids duplicate startup in debug reloader."""
+    global scheduler
+
+    if not _scheduler_available:
+        logger.warning("APScheduler not available. Background scraping disabled.")
+        return
+
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    if debug_mode and os.getenv('WERKZEUG_RUN_MAIN') != 'true':
+        return
+
+    if scheduler and scheduler.running:
+        return
+
     scheduler = BackgroundScheduler()
-    # Scrape every 15 minutes
     scheduler.add_job(background_scrape, 'interval', minutes=15, id='scrape_job',
                       replace_existing=True, max_instances=1)
     scheduler.start()
+    atexit.register(stop_scheduler)
     logger.info("Background scheduler started (scraping every 15 minutes)")
 
 
@@ -592,4 +792,5 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     # Process any unprocessed articles on startup
     process_articles_metadata()
+    start_scheduler()
     app.run(debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')
