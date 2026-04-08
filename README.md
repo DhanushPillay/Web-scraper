@@ -1,165 +1,161 @@
-# Tech News Aggregator & Scraper
+# Tech News Aggregator
 
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
-![Flask Version](https://img.shields.io/badge/flask-2.0%2B-green)
+![Flask Version](https://img.shields.io/badge/flask-3.0%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
-A modern, professional web application for aggregating and viewing technology news from **5 major sources**. Features a clean SaaS-style dashboard with real-time statistics, bookmarking, and AI-powered article summarization.
+Tech News Aggregator is a Flask application that collects technology stories from five major sources, enriches the data with NLP metadata, and serves a searchable dashboard with bookmarks, exports, and integration endpoints.
 
-## Features
+## What It Does
 
-### 🌐 Multi-Source Aggregation
-- **Hacker News**: Top stories with scores and comments
-- **TechCrunch**: Latest tech industry news
-- **Reddit** (r/technology): Community-driven discussions
-- **The Verge**: Tech culture and product reviews
-- **Ars Technica**: In-depth technical analysis
-- **High-Performance Concurrency**: Scraping engine uses `concurrent.futures.ThreadPoolExecutor` to fetch from all sources simultaneously.
-- **Resilient Network Connections**: Implements `urllib3.util.retry.Retry` with exponential backoff to recover from transient HTTP failures.
+- Aggregates stories from Hacker News, TechCrunch, Reddit (r/technology), The Verge, and Ars Technica.
+- Scrapes sources concurrently with retries and source health tracking.
+- Caches scraper results (5 minute TTL) to reduce unnecessary network requests.
+- Persists data in SQLite with deduplication by URL.
+- Supports full-text search via SQLite FTS5 with fallback behavior.
+- Adds metadata in the background: category, sentiment, read time.
+- Supports bookmarks, read/unread status, and personalized feed ranking.
+- Exports data as CSV, JSON, and Markdown.
+- Offers optional webhook test and SMTP digest endpoints.
 
-### 📊 Dashboard & Analytics
-- **Real-time Statistics**: Total articles, new today, saved count, top source
-- **Auto-refresh**: Stats update on every page load
-- **Clean SaaS Design**: Modern minimal interface with professional typography
+## Recent Hardening Updates
 
-### 💾 Data Management
-- **SQLite Database**: Persistent storage for all articles
-- **FTS5 Full-Text Search**: O(1) text search implemented using SQLite's FTS5 extension.
-- **Personalized Feed Algorithm**: Custom SQL scoring and ranking logic based on individual user bookmarking behavior.
-- **Automatic Deduplication**: Prevents duplicate articles
-- **Bookmark System**: Save articles for later reading
-- **Advanced Filtering**: Filter by source, keyword, or view saved articles only
-- **Sorting Options**: Sort by score, comments, or recency
-
-### 🎨 Modern Interface & AI NLP Data Enrichment
-- **Clean Design**: Professional SaaS-style dashboard
-- **Monochrome Theme**: Professional black/gray/white interface (no distractions)
-- **Responsive Layout**: Works on desktop and mobile
-- **AI Summarization**: Extractive summarization via `newspaper3k`
-- **CSV Export**: Streamed download of high-volume datasets via Flask's `stream_with_context`
-- **Sentiment Analysis**: NLTK VADER sentiment compound scoring (Positive/Negative/Neutral)
-- **Trending Topics**: TF-IDF alternatives extracting contextually relevant bigrams
-
-### 📧 Email Digest (Beta)
-- Subscribe to daily news updates (skeleton implementation)
-- Ready for SMTP integration
+- Added bounded input parsing for page, scrape pages, and query values.
+- Added keyword/query sanitization and source/sort/category normalization.
+- Added safer JSON payload handling across API routes.
+- Added stricter email validation for subscription and digest endpoints.
+- Added outbound URL validation for summarize and webhook endpoints:
+  - Blocks localhost and private/reserved IP targets.
+  - Rejects credentialed URLs.
+  - Restricts explicit ports to 80 and 443.
+- Added scheduler startup guard to avoid duplicate jobs in debug reload mode.
+- Added idempotent metadata processing marker with metadata_processed_at.
 
 ## Prerequisites
 
-- Python 3.8 or higher
-- Internet connection
+- Python 3.8+
+- Internet access
 
 ## Installation
 
-1. **Clone the repository**
-    ```bash
-    git clone https://github.com/DhanushPillay/Web-scraper.git
-    cd Web-scraper
-    ```
+1. Clone repository.
 
-2. **Install dependencies**
-    ```bash
-    pip install -r requirements.txt
-    ```
+```bash
+git clone https://github.com/DhanushPillay/Web-scraper.git
+cd Web-scraper
+```
 
-3. **(Optional) NLTK Setup**
-    The app downloads NLTK data automatically. If issues occur:
-    ```python
-    import nltk
-    nltk.download('punkt')
-    ```
+2. Install dependencies.
 
-## Usage
+```bash
+pip install -r requirements.txt
+```
 
-### Start the Application
+3. Run the app.
 
 ```bash
 python app.py
 ```
 
-Open [http://127.0.0.1:5000/](http://127.0.0.1:5000/) in your browser.
+Open http://127.0.0.1:5000/.
 
-### Using the Dashboard
+## Configuration
 
-1. **View Statistics**: See total articles, new today, saved articles, and top source
-2. **Scrape Articles**: Click **"Scrape Now"** in the top navbar to fetch latest news
-3. **Filter Content**: Use source dropdown or keyword search
-4. **Save Articles**: Click the star icon to bookmark articles
-5. **View Summaries**: Click "Summarize" on any article
-6. **Export Data**: Download results as CSV
+Optional environment variables:
+
+- FLASK_DEBUG: true or false
+- WEBHOOK_URL: URL used by POST /api/webhook/test
+- SMTP_HOST: SMTP server host
+- SMTP_PORT: SMTP server port (default 587)
+- SMTP_USER: SMTP username/email
+- SMTP_PASS: SMTP password/app password
 
 ## Project Structure
 
-```
+```text
 Web-scraper/
-├── app.py              # Flask application with background metadata/scheduling loops
-├── web_scraper.py      # Scraping logic (BaseScraper pattern with caching)
-├── database.py         # SQLite database management with idempotent migrations
-├── templates/
-│   └── index.html      # Modern SaaS dashboard UI
-├── technews.db         # SQLite database (auto-generated)
-├── requirements.txt    # Python dependencies
-└── doc/
-    └── project_explanation.md # Deep Technical Architecture documentation
+|- app.py
+|- web_scraper.py
+|- database.py
+|- templates/
+|  \- index.html
+|- static/
+|  \- service-worker.js
+|- doc/
+|  \- project_explanation.md
+|- tests/
+|- requirements.txt
+\- technews.db (runtime generated)
 ```
 
-## Database Schema
+## Database Model
 
-```sql
-CREATE TABLE articles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    link TEXT UNIQUE NOT NULL,
-    score INTEGER DEFAULT 0,
-    author TEXT,
-    time_posted TEXT,
-    comments TEXT,
-    source TEXT,
-    created_at REAL,
-    is_saved INTEGER DEFAULT 0
-);
-```
+Main table: articles
 
-## API Endpoints
+- id INTEGER PRIMARY KEY AUTOINCREMENT
+- title TEXT NOT NULL
+- link TEXT UNIQUE NOT NULL
+- score INTEGER DEFAULT 0
+- author TEXT
+- time_posted TEXT
+- comments TEXT
+- source TEXT
+- created_at REAL
+- is_saved INTEGER DEFAULT 0
+- is_read INTEGER DEFAULT 0
+- sentiment TEXT DEFAULT 'neutral'
+- sentiment_score REAL DEFAULT 0.0
+- category TEXT DEFAULT 'general'
+- read_time INTEGER DEFAULT 0
+- metadata_processed_at REAL
 
-- `GET /` - Main dashboard
-- `GET /saved` - View bookmarked articles
-- `POST /bookmark/<id>` - Toggle bookmark status
-- `GET /api/stats` - Get dashboard statistics (JSON)
-- `POST /summarize` - Get AI summary of an article
-- `POST /subscribe` - Subscribe to email digest
+FTS table: articles_fts (title, author, source) with triggers for insert/update/delete sync.
 
-## Technologies Used
+## API and Routes
 
-- **Backend**: Flask, SQLite3
-- **Scraping**: BeautifulSoup4, Requests
-- **AI/NLP**: Newspaper3k, NLTK
-- **Frontend**: Bootstrap 5, Inter Font, Vanilla JavaScript
-- **Data**: SQLite3, CSV (built-in)
+UI routes:
+
+- GET / : dashboard
+- POST / : scrape + filter form submit
+- GET /saved : bookmarked list
+- GET /download : CSV export
+- GET /export/json : bookmarked JSON export
+- GET /export/markdown : bookmarked Markdown export
+- GET /manifest.json : PWA manifest
+- GET /service-worker.js : service worker
+
+JSON API routes:
+
+- POST /bookmark : toggle bookmark, body { article_id }
+- POST /toggle_read : toggle read status, body { article_id }
+- POST /subscribe : subscribe email, body { email }
+- GET /api/stats : aggregate stats
+- GET /api/search?q=... : full-text search
+- GET /api/health : scraper health snapshot
+- GET /api/personalized : personalized feed
+- POST /api/summarize : summarize URL, body { url }
+- POST /api/webhook/test : send sample digest to WEBHOOK_URL
+- POST /api/email/digest : send digest via SMTP to body { email }
+
+## Notes on Runtime Behavior
+
+- Scheduler runs every 15 minutes when APScheduler is installed.
+- In debug mode, scheduler startup is guarded to avoid duplicate runs.
+- Metadata enrichment processes only rows where metadata_processed_at IS NULL.
+- Sort order for paginated queries is handled in SQL for consistency.
 
 ## Troubleshooting
 
-- **NLTK Errors**: Run `python -c "import nltk; nltk.download('punkt')"`
-- **Rate Limiting**: Scrapers include delays to respect server limits
-- **Empty Results**: Some sources may block requests temporarily
+- Missing NLTK resources: start app once and let auto-download complete.
+- Empty source results: source may be temporarily unavailable or rate-limited.
+- SMTP errors: verify SMTP_* variables and app-password requirements.
+- Webhook test blocked: ensure WEBHOOK_URL passes safe URL checks.
 
-## Future Enhancements
+## Development Status
 
-- Complete email digest with SMTP integration
-- User authentication and profiles
-- More sources (Dev.to, Product Hunt, Slashdot)
-- Complete email digest with SMTP integration
-- User authentication and profiles
-- More sources (Dev.to, Product Hunt, Slashdot)
+- Tests directory exists but currently has no test files.
+- CI workflow is not configured yet.
 
 ## License
 
-MIT License - Use and modify freely.
-
-## Contributing
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+MIT
