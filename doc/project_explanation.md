@@ -1,94 +1,242 @@
-# Tech News Aggregator - Deep Technical Architecture
+# Tech News Aggregator - Technical Architecture
 
-This document provides a highly detailed, component-level technical explanation of the Tech News Aggregator. It covers the internal mechanisms, concurrency models, data pipelines, NLP applications, and design patterns used across the stack.
-
----
-
-## 1. The Scraping Engine (`web_scraper.py`)
-
-The scraping engine is responsible for efficiently aggregating data from 5 disparate sources. It is designed around resilience, speed, and concurrency.
-
-### 1.1 Base Abstraction (`BaseScraper`)
-All scrapers inherit from `BaseScraper(ABC)`.
-- **Session Management**: Uses `requests.Session()` to pool connections.
-- **Resiliency**: Implements `urllib3.util.retry.Retry` with a backoff factor of `0.5` and 3 total retries for specific HTTP statuses (`429, 500, 502, 503`). This ensures transient network failures don't break the scraping pipeline.
-- **Health Tracking**: Tracks `last_status`, `scrape_duration`, and `last_error` per source to power the dashboard's health API.
-
-### 1.2 Data Ingestion Strategies
-The engine prioritizes speed by preferring structured data formats over raw HTML parsing:
-- **RSS Feeds (`feedparser`)**: TechCrunch, The Verge, Ars Technica, and Hacker News (via `hnrss.org`) use RSS. `feedparser` parses these feeds instantly without the overhead of DOM traversal.
-- **JSON APIs**: Reddit (`r/technology/top.json`) is queried directly via its native API.
-- **HTML Fallback (`BeautifulSoup`)**: If the Hacker News RSS feed fails or is empty, the `HackerNewsScraper` falls back to the `_scrape_html` method. It iterates over `num_pages`, introducing a 1-second `time.sleep()` to prevent rate limiting, and parses the DOM using `BeautifulSoup` (`'html.parser'`), targeting `tr.athing` and `tr > td.subtext` to extract scores, authors, and comments.
-
-### 1.3 Concurrency & Caching (`NewsAggregator`)
-- **Multithreading**: The `scrape_all` method executes all 5 scrapers simultaneously using `concurrent.futures.ThreadPoolExecutor(max_workers=5)`. This reduces the total scrape time from the sum of all response times to roughly the time of the slowest source.
-- **Caching Mechanism**: Implements a Time-To-Live (TTL) cache (`CACHE_TTL = 300` seconds). If a user requests a scrape within 5 minutes of the last one, it skips network requests entirely unless forced (`force=True`).
+This document explains the current implementation in the repository and reflects the latest hardening and data-flow changes.
 
 ---
 
-## 2. Data Persistence & Indexing (`database.py`)
+## 1. System Overview
 
-The application uses SQLite3, highly optimized for read-heavy operations, with native full-text search capabilities.
+The app is a Flask-based news aggregation service composed of three core modules:
 
-### 2.1 Database Initialization & Schema Migrations
-- Uses `sqlite3.Row` for dict-like row access.
-- **Idempotent Migrations**: The `init_db` method safely checks if specific columns (e.g., `sentiment`, `category`) exist using `SELECT ... LIMIT 1`. If an `OperationalError` happens, it issues an `ALTER TABLE` to append the column. This natively supports schema evolution without external libraries like Alembic.
+- web_scraper.py: source adapters + aggregation orchestration
+- database.py: SQLite persistence, FTS5 indexing, and query APIs
+- app.py: HTTP routes, validation, background jobs, and integration endpoints
 
-### 2.2 FTS5 Full-Text Search Implementation
-Standard `LIKE` queries are O(N) and slow down as the database grows. This app implements O(1) text search using SQLite's `FTS5` extension.
-- **Virtual Table**: `CREATE VIRTUAL TABLE articles_fts USING fts5(title, author, source, content='articles', content_rowid='id')`.
-- **Trigger-Based Synchronization**: To keep the `articles_fts` index completely synchronized with the `articles` table without writing dual-insert logic in Python, three SQLite triggers handle it natively:
-  1. `articles_ai` (After Insert): Pushes new row into FTS.
-  2. `articles_ad` (After Delete): Removes deleted row from FTS.
-  3. `articles_au` (After Update): Updates FTS row.
-- **Query Execution**: `search_articles` executes a `MATCH` query against the `articles_fts` table, ordering by SQLite's internal `rank` function (BM25 algorithm) for relevance.
+Data flow:
 
-### 2.3 Personalized Feed Algorithm
-The `/api/personalized` endpoint surfaces content tailored to user behavior.
-1. It queries the 3 most frequent `source` and `category` values among articles where `is_saved = 1`.
-2. It constructs a dynamic SQL query to calculate a `relevance_score` using `CASE WHEN ... THEN`. Matches on favored sources grant +2 points; favored categories grant +1 point.
-3. The results are ordered by `relevance_score DESC, created_at DESC`.
+1. Scrapers pull stories from external sources.
+2. Aggregator merges story lists and caches them for 5 minutes.
+3. Database layer inserts deduplicated records.
+4. Metadata enrichment updates sentiment/category/read-time asynchronously.
+5. Flask routes serve UI and API responses from persisted data.
 
 ---
 
-## 3. NLP & Data Enrichment (`app.py`)
+## 2. Scraping Layer (web_scraper.py)
 
-The application performs background natural language processing on article titles to extract semantic meaning.
+### 2.1 BaseScraper Contract
 
-### 3.1 Rule-Based Categorization
-- `classify_article(title)` uses a dictionary mapping of themes (`CATEGORY_KEYWORDS`) to lists of keywords (e.g., 'Business', 'AI & ML', 'Hardware').
-- It generates a score for each category by counting exact substring matches in the normalized string. The highest score wins.
+All source scrapers inherit from BaseScraper and share:
 
-### 3.2 Sentiment Analysis (NLTK VADER)
-- Uses `nltk.sentiment.vader.SentimentIntensityAnalyzer`.
-- Calculates the `compound` polarity score (from -1 to +1).
-- Triggers custom labels: `>= 0.05` is Positive, `<= -0.05` is Negative, else Neutral.
+- requests.Session with retry policy:
+  - total retries: 3
+  - backoff_factor: 0.5
+  - retried statuses: 429, 500, 502, 503
+- common User-Agent header
+- health state fields:
+  - last_status
+  - last_scrape_time
+  - scrape_duration
+  - last_error
 
-### 3.3 Trending Topics / TF-IDF Alternative
-- `extract_trending_topics` calculates frequency distributions (`collections.Counter`) of words and bigrams across recent titles.
-- It filters out non-alpha characters via regex `[a-zA-Z]{3,}` and strips English filler words using `nltk.corpus.stopwords` combined with domain-specific stop words (e.g., 'new', 'says', 'use').
-- Generates 2-word phrases (bigrams) to extract context like "artificial intelligence" instead of just "artificial".
+### 2.2 Source Adapters
 
-### 3.4 AI Summarization Component
-- Handled dynamically on the `/api/summarize` endpoint.
-- Instantiates an `Article` object from the `newspaper3k` library.
-- Calls `download()`, `parse()`, and `nlp()` to fetch the HTML, extract the primary text (stripping ads and menus), and run extractive summarization to return a concise paragraph along with the `top_image`.
+- HackerNewsScraper:
+  - primary source: hnrss.org RSS
+  - fallback source: news.ycombinator.com HTML parser
+- TechCrunchScraper: RSS
+- RedditScraper: JSON API (/r/technology/top.json)
+- TheVergeScraper: RSS
+- ArsTechnicaScraper: RSS
+
+### 2.3 Aggregation and Caching
+
+NewsAggregator manages all scrapers and executes them via ThreadPoolExecutor(max_workers=5).
+
+- CACHE_TTL = 300 seconds
+- scrape_all(force=False) returns cached in-memory results when TTL is valid
+- scrape_all(force=True) always refreshes source content
+- get_health() exposes per-source scrape diagnostics
 
 ---
 
-## 4. Web Application Architecture (Flask)
+## 3. Persistence and Search Layer (database.py)
 
-### 4.1 Route Controllers & Endpoints
-- **Pagination**: The `index` route uses structural offsets (`(page - 1) * per_page`) inside the database queries.
-- **REST APIs**: Bookmarking and read statuses are handled via JSON POST requests. Returning success `{'status': 'saved'}` toggles UI states via standard vanilla JavaScript handlers.
+### 3.1 SQLite Connection Behavior
 
-### 4.2 Streaming Large Exports
-- The `/download` endpoint generates a CSV file of the articles.
-- Instead of keeping a potentially massive string in memory, it leverages Flask's `stream_with_context` alongside a generator function and `io.StringIO()`.
-- It writes row-by-row, yielding the buffer output and immediately truncating `output.truncate(0)`. This handles high-volume dataset exports with minimal RAM overhead.
+Each operation uses a short-lived context-managed connection with:
 
-### 4.3 Background Schedulers
-- Imports `apscheduler.schedulers.background.BackgroundScheduler`.
-- Exposes two core background tasks:
-  1. `background_scrape()`: Forces a cache bypass and retrieves new articles.
-  2. `process_articles_metadata()`: Finds records with generic metadata (`sentiment = 'neutral'`, `category = 'general'`) and processes them in batches of 100, offloading NLTK processing from request-response cycles to ensure fast page loads for end-users.
+- sqlite3.Row row factory
+- timeout=15 at connect time
+- PRAGMA busy_timeout = 5000
+
+This improves behavior under transient lock pressure.
+
+### 3.2 Schema and Migrations
+
+Primary table: articles
+
+- Core identity/content: id, title, link, score, author, time_posted, comments, source
+- Runtime state: created_at, is_saved, is_read
+- NLP metadata: sentiment, sentiment_score, category, read_time
+- Metadata lifecycle: metadata_processed_at
+
+Initialization includes idempotent migration checks for expected columns before ALTER TABLE.
+
+### 3.3 Full-Text Search (FTS5)
+
+- Virtual table: articles_fts(title, author, source)
+- Synchronization triggers:
+  - articles_ai (insert)
+  - articles_ad (delete)
+  - articles_au (update)
+- search_articles(query, limit) issues MATCH queries
+- If FTS errors, database falls back to LIKE-based retrieval
+
+### 3.4 Query Semantics and Sorting
+
+get_articles supports filtering by source, keyword, saved/unread state, and category.
+
+Sort behavior is SQL-driven (not post-pagination in Python):
+
+- newest: created_at DESC
+- score: CAST(score AS INTEGER) DESC, created_at DESC
+- comments: numeric comments DESC, created_at DESC
+
+This guarantees consistent ordering across paginated pages.
+
+### 3.5 Metadata Processing Idempotency
+
+get_unprocessed_articles now selects rows where metadata_processed_at IS NULL.
+
+During enrichment, update_article_metadata sets metadata_processed_at, so the same rows are not repeatedly reprocessed in subsequent background runs.
+
+---
+
+## 4. Application Layer (app.py)
+
+### 4.1 Input Validation and Normalization
+
+The route layer includes centralized helpers for input safety:
+
+- parse_bounded_int: numeric clamping for pagination/scrape bounds
+- parse_positive_int: strict positive id parsing
+- sanitize_keyword: regex-filtered keyword with max length
+- sanitize_search_query: bounded FTS query sanitization
+- normalize_sort_by: restricts sort to score/comments/newest
+- normalize_source_filter: source whitelist
+- normalize_category_filter: category whitelist based on keyword map
+- get_json_payload: safe JSON parsing returning None for malformed bodies
+
+### 4.2 URL and Email Safety
+
+is_safe_url applies outbound URL protections:
+
+- http/https only
+- rejects credentialed URLs
+- rejects localhost and blocked hostnames
+- blocks private/reserved/link-local/loopback/multicast/unspecified IPs
+- resolves hostnames and rejects those resolving to disallowed IP ranges
+- allows explicit ports only 80 and 443
+
+is_valid_email enforces length and blocks CRLF characters before regex validation.
+
+### 4.3 Dashboard Routes
+
+- GET/POST / : main feed, scraping trigger, filtered retrieval, pagination
+- GET /saved : saved-only feed
+- GET /download : streamed CSV export
+
+### 4.4 API Routes
+
+- POST /bookmark
+- POST /toggle_read
+- POST /subscribe
+- GET /api/stats
+- GET /api/search
+- GET /api/health
+- GET /api/personalized
+- POST /api/summarize
+- POST /api/webhook/test
+- POST /api/email/digest
+- GET /export/json
+- GET /export/markdown
+
+Error handling patterns:
+
+- Invalid/missing JSON payloads return 400
+- Invalid article ids return 400
+- Missing rows in bookmark/read toggles return 404
+- summarize and webhook endpoints reject unsafe URLs
+
+---
+
+## 5. NLP and Metadata Enrichment
+
+Metadata is derived from article titles:
+
+- Category classification: keyword scoring over CATEGORY_KEYWORDS
+- Sentiment analysis: NLTK VADER compound score thresholds
+- Read-time estimate: heuristic based on title length
+
+Background enrichment flow:
+
+1. Fetch unprocessed rows (metadata_processed_at IS NULL)
+2. Compute category, sentiment, read-time
+3. Persist metadata + metadata_processed_at timestamp
+
+---
+
+## 6. Scheduler Lifecycle
+
+Background scraping uses APScheduler when installed.
+
+- start_scheduler() creates a 15-minute interval job for background_scrape
+- In Flask debug mode, startup is guarded with WERKZEUG_RUN_MAIN checks to avoid duplicate scheduler instances
+- stop_scheduler() is registered via atexit for graceful shutdown
+
+Startup sequence in __main__:
+
+1. logging setup
+2. initial metadata processing pass
+3. scheduler startup
+4. app.run
+
+---
+
+## 7. Export and Integrations
+
+- CSV export: streamed response with csv.DictWriter + generator
+- JSON export: saved/bookmarked articles as JSON
+- Markdown export: bookmarks grouped by source
+- Webhook test: posts compact digest payload to WEBHOOK_URL
+- Email digest: SMTP-based digest of top 10 records
+
+---
+
+## 8. Frontend and PWA
+
+Template: templates/index.html
+
+- Bootstrap-based dashboard
+- client-side API calls for bookmark/read/summary/subscribe/personalized features
+- service worker registration
+
+PWA support:
+
+- GET /manifest.json route
+- static/service-worker.js cache implementation
+
+---
+
+## 9. Current Gaps
+
+- No automated test suite is implemented yet in tests/
+- No CI pipeline is configured
+- Optional integrations (SMTP/webhook) require environment configuration
+
+---
+
+## 10. Summary
+
+The current system is a practical single-node Flask + SQLite architecture optimized for lightweight deployment. Recent updates improved request validation, outbound URL safety, pagination-sort correctness, scheduler lifecycle behavior, and idempotent metadata processing.
