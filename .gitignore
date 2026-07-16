@@ -1,7 +1,7 @@
 ﻿__pycache__/
 *.pyc
 *.pyo
-technews.db
+sniffer.db
 .venv/
 *.db
 verify.py

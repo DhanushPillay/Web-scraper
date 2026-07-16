@@ -1,5 +1,5 @@
 """
-Flask Application — Tech News Aggregator
+Flask Application — Sniffer
 Routes, background scheduler, sentiment analysis, trending topics,
 auto-tagging, charts, export, personalized feed, and webhook/email stubs.
 """
@@ -786,7 +786,7 @@ def test_webhook() -> ResponseReturnValue:
                 f"- Total articles: {stats['total']}\n"
                 f"- New today: {stats['today']}\n"
                 f"- Saved: {stats['saved']}",
-        'username': 'Tech News Aggregator'
+        'username': 'Sniffer'
     }
 
     try:
@@ -852,8 +852,8 @@ def send_email_digest() -> ResponseReturnValue:
 @app.route('/manifest.json')
 def manifest():
     return jsonify({
-        "name": "Tech News Aggregator",
-        "short_name": "TechNews",
+        "name": "Sniffer",
+        "short_name": "Sniffer",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#1a1a2e",

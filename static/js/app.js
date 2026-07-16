@@ -1,5 +1,5 @@
 /**
- * Tech News Aggregator — Client-side Interactions
+ * Sniffer — Client-side Interactions
  * Vanilla JS, no frameworks, progressive enhancement
  */
 
@@ -938,7 +938,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const firstCard = $('.article-card');
   if (firstCard) firstCard.classList.add('focused');
 
-  console.log('Tech News Aggregator initialized');
+  console.log('Sniffer initialized');
 });
 
 // Handle page visibility change (refresh on return)

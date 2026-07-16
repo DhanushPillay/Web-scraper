@@ -1,5 +1,5 @@
 """
-Database Module — Tech News Aggregator
+Database Module — Sniffer
 SQLite with FTS5 full-text search, sentiment/category columns,
 pagination, reading list, and export features.
 """
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
-    def __init__(self, db_name: str = "technews.db") -> None:
+    def __init__(self, db_name: str = "sniffer.db") -> None:
         self.db_name = db_name
         self.init_db()
 
@@ -65,6 +65,7 @@ class Database:
                 ("category", "TEXT DEFAULT 'general'"),
                 ("read_time", "INTEGER DEFAULT 0"),
                 ("metadata_processed_at", "REAL"),
+                ("excerpt", "TEXT DEFAULT ''"),
             ]
             for col_name, col_type in migrations:
                 try:
@@ -76,7 +77,7 @@ class Database:
             # 3. Create FTS5 virtual table for full-text search
             cursor.execute('''
                 CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
-                    title, author, source,
+                    title, author, source, excerpt,
                     content='articles',
                     content_rowid='id'
                 )
@@ -85,22 +86,22 @@ class Database:
             # 4. Create triggers to keep FTS in sync
             cursor.execute('''
                 CREATE TRIGGER IF NOT EXISTS articles_ai AFTER INSERT ON articles BEGIN
-                    INSERT INTO articles_fts(rowid, title, author, source)
-                    VALUES (new.id, new.title, new.author, new.source);
+                    INSERT INTO articles_fts(rowid, title, author, source, excerpt)
+                    VALUES (new.id, new.title, new.author, new.source, new.excerpt);
                 END
             ''')
             cursor.execute('''
                 CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
-                    INSERT INTO articles_fts(articles_fts, rowid, title, author, source)
-                    VALUES ('delete', old.id, old.title, old.author, old.source);
+                    INSERT INTO articles_fts(articles_fts, rowid, title, author, source, excerpt)
+                    VALUES ('delete', old.id, old.title, old.author, old.source, old.excerpt);
                 END
             ''')
             cursor.execute('''
                 CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
-                    INSERT INTO articles_fts(articles_fts, rowid, title, author, source)
-                    VALUES ('delete', old.id, old.title, old.author, old.source);
-                    INSERT INTO articles_fts(rowid, title, author, source)
-                    VALUES (new.id, new.title, new.author, new.source);
+                    INSERT INTO articles_fts(articles_fts, rowid, title, author, source, excerpt)
+                    VALUES ('delete', old.id, old.title, old.author, old.source, old.excerpt);
+                    INSERT INTO articles_fts(rowid, title, author, source, excerpt)
+                    VALUES (new.id, new.title, new.author, new.source, new.excerpt);
                 END
             ''')
 
@@ -125,14 +126,15 @@ class Database:
                     INSERT OR IGNORE INTO articles
                     (title, link, score, author, time_posted, comments, source, created_at,
                      is_saved, is_read, sentiment, sentiment_score, category, read_time,
-                     metadata_processed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'neutral', 0.0, 'general', 0, NULL)
+                     metadata_processed_at, excerpt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'neutral', 0.0, 'general', 0, NULL, ?)
                 ''', [
                     (
                         a.get('title'), a.get('link'), a.get('score', 0),
                         a.get('author', 'Unknown'), a.get('time', 'Unknown'),
                         a.get('comments', '0'), a.get('source', 'Unknown'),
-                        time.time()
+                        time.time(),
+                        a.get('excerpt', '')
                     )
                     for a in articles
                 ])

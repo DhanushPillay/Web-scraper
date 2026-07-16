@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: tech-news-aggregator
+    name: sniffer
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT

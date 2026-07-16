@@ -1,4 +1,4 @@
-# Tech News Aggregator - Technical Architecture
+# Sniffer - Technical Architecture
 
 This document explains the current implementation in the repository and reflects the latest hardening and data-flow changes.
 

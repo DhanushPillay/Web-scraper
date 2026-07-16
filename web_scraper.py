@@ -1,8 +1,9 @@
 """
-Web Scraper Module — Tech News Aggregator
+Web Scraper Module — Sniffer
 Uses RSS feeds where available for speed, falls back to HTML scraping.
 Includes caching, health tracking, and retry logic.
 """
+import re
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -15,6 +16,24 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+EXCERPT_MAX_LEN = 280
+
+def _clean_excerpt(text: str) -> str:
+    """Strip HTML tags, normalize whitespace, truncate to EXCERPT_MAX_LEN."""
+    if not text:
+        return ""
+    # Remove HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Decode common HTML entities
+    text = text.replace('&', '&').replace('<', '<').replace('>', '>')
+    text = text.replace("&#34;", "&#34;").replace("&#39;", "&#39;").replace("&nbsp;", " ")
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    # Truncate at word boundary
+    if len(text) > EXCERPT_MAX_LEN:
+        text = text[:EXCERPT_MAX_LEN].rsplit(' ', 1)[0] + '…'
+    return text
 
 
 class BaseScraper(ABC):
@@ -98,6 +117,11 @@ class HackerNewsScraper(BaseScraper):
                     if hasattr(entry, 'author'):
                         author = entry.author
 
+                    # Extract excerpt from RSS description
+                    excerpt = ""
+                    if hasattr(entry, 'description'):
+                        excerpt = _clean_excerpt(entry.description)
+
                     articles.append({
                         'title': entry.title,
                         'link': entry.link,
@@ -105,7 +129,8 @@ class HackerNewsScraper(BaseScraper):
                         'author': author,
                         'time': time_posted,
                         'comments': str(comments),
-                        'source': 'Hacker News'
+                        'source': 'Hacker News',
+                        'excerpt': excerpt
                     })
                 self.last_status = "ok"
             else:
@@ -181,6 +206,9 @@ class HackerNewsScraper(BaseScraper):
                                 comments = "0"
                             break
 
+                # HN HTML doesn't have excerpts, leave empty
+                excerpt = ""
+
                 articles.append({
                     'title': title,
                     'link': link,
@@ -188,7 +216,8 @@ class HackerNewsScraper(BaseScraper):
                     'author': author,
                     'time': time_posted,
                     'comments': comments,
-                    'source': 'Hacker News'
+                    'source': 'Hacker News',
+                    'excerpt': excerpt
                 })
             except (AttributeError, ValueError):
                 continue
@@ -217,6 +246,13 @@ class TechCrunchScraper(BaseScraper):
                 if hasattr(entry, 'published'):
                     time_posted = entry.published
 
+                # Extract excerpt from RSS description/summary
+                excerpt = ""
+                if hasattr(entry, 'summary'):
+                    excerpt = _clean_excerpt(entry.summary)
+                elif hasattr(entry, 'description'):
+                    excerpt = _clean_excerpt(entry.description)
+
                 articles.append({
                     'title': entry.title,
                     'link': entry.link,
@@ -224,7 +260,8 @@ class TechCrunchScraper(BaseScraper):
                     'author': author,
                     'time': time_posted,
                     'comments': '0',
-                    'source': 'TechCrunch'
+                    'source': 'TechCrunch',
+                    'excerpt': excerpt
                 })
             self.last_status = "ok"
         except Exception as e:
@@ -257,6 +294,11 @@ class RedditScraper(BaseScraper):
 
                 for post in children:
                     p_data = post.get('data', {})
+                    # Extract excerpt from selftext (Reddit post body)
+                    excerpt = ""
+                    if p_data.get('selftext'):
+                        excerpt = _clean_excerpt(p_data['selftext'])
+
                     articles.append({
                         'title': p_data.get('title'),
                         'link': p_data.get('url'),
@@ -264,7 +306,8 @@ class RedditScraper(BaseScraper):
                         'author': p_data.get('author'),
                         'time': 'Today',
                         'comments': str(p_data.get('num_comments', 0)),
-                        'source': 'Reddit'
+                        'source': 'Reddit',
+                        'excerpt': excerpt
                     })
             self.last_status = "ok"
         except requests.RequestException as e:
@@ -300,6 +343,13 @@ class TheVergeScraper(BaseScraper):
                 if hasattr(entry, 'published'):
                     time_posted = entry.published
 
+                # Extract excerpt from RSS summary/description
+                excerpt = ""
+                if hasattr(entry, 'summary'):
+                    excerpt = _clean_excerpt(entry.summary)
+                elif hasattr(entry, 'description'):
+                    excerpt = _clean_excerpt(entry.description)
+
                 articles.append({
                     'title': entry.title,
                     'link': entry.link,
@@ -307,7 +357,8 @@ class TheVergeScraper(BaseScraper):
                     'author': author,
                     'time': time_posted,
                     'comments': '0',
-                    'source': 'The Verge'
+                    'source': 'The Verge',
+                    'excerpt': excerpt
                 })
             self.last_status = "ok"
         except Exception as e:
@@ -343,6 +394,13 @@ class ArsTechnicaScraper(BaseScraper):
                 if hasattr(entry, 'published'):
                     time_posted = entry.published
 
+                # Extract excerpt from RSS summary/description
+                excerpt = ""
+                if hasattr(entry, 'summary'):
+                    excerpt = _clean_excerpt(entry.summary)
+                elif hasattr(entry, 'description'):
+                    excerpt = _clean_excerpt(entry.description)
+
                 articles.append({
                     'title': entry.title,
                     'link': entry.link,
@@ -350,7 +408,8 @@ class ArsTechnicaScraper(BaseScraper):
                     'author': author,
                     'time': time_posted,
                     'comments': '0',
-                    'source': 'Ars Technica'
+                    'source': 'Ars Technica',
+                    'excerpt': excerpt
                 })
             self.last_status = "ok"
         except Exception as e:

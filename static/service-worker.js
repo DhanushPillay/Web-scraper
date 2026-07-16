@@ -1,5 +1,5 @@
-// Service Worker — Tech News Aggregator
-const CACHE_NAME = 'technews-v2';
+// Service Worker — Sniffer
+const CACHE_NAME = 'sniffer-v1';
 const APP_SHELL = [
     '/',
     '/static/css/app.css',
