@@ -1,1123 +1,549 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
-
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description"
-        content="Tech News Aggregator — Real-time news from Hacker News, TechCrunch, Reddit, The Verge, and Ars Technica">
+    <meta name="description" content="Tech News Aggregator — Real-time news from Hacker News, TechCrunch, Reddit, The Verge, and Ars Technica">
     <title>Tech News Aggregator</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#0f172a">
-    <style>
-        :root {
-            /* Custom Variables */
-            --primary: #f8fafc;
-            --primary-hover: #e2e8f0;
-            --primary-glow: rgba(255, 255, 255, 0.25);
-            --accent: #cbd5e1;
-            --bg-dark: #09090b;
-            --bg-card: #18181b;
-            --bg-surface: #27272a;
-            --text-primary: #f8fafc;
-            --text-secondary: #a1a1aa;
-            --border: rgba(255, 255, 255, 0.15);
-            --gradient-1: linear-gradient(135deg, #f8fafc, #94a3b8);
-            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-
-            /* Bootstrap Overrides */
-            --bs-primary: #f8fafc;
-            --bs-body-bg: #09090b;
-            --bs-body-color: #f8fafc;
-        }
-
-        * {
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-        }
-
-        body {
-            background: var(--bg-dark);
-            color: var(--text-primary);
-            min-height: 100vh;
-            line-height: 1.6;
-        }
-
-        /* Subtle grid background */
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-image:
-                linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-            background-size: 30px 30px;
-            z-index: -1;
-            mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
-        }
-
-        .navbar-custom {
-            background: rgba(15, 23, 42, 0.85);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            padding: 1rem 0;
-        }
-
-        .navbar-brand {
-            font-weight: 800;
-            font-size: 1.5rem;
-            letter-spacing: -0.025em;
-            background: var(--gradient-1);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        /* Stats Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-
-        .stat-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 1.5rem;
-            position: relative;
-            overflow: hidden;
-            transition: all 0.3s ease;
-        }
-
-        .stat-card::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            right: 0;
-            bottom: 0;
-            left: 0;
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent);
-            pointer-events: none;
-        }
-
-        .stat-card:hover {
-            border-color: var(--primary);
-            box-shadow: 0 4px 20px -5px var(--primary-glow);
-            transform: translateY(-3px);
-        }
-
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 800;
-            line-height: 1;
-            margin-bottom: 0.25rem;
-            background: var(--gradient-1);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-
-        .stat-label {
-            font-size: 0.8rem;
-            font-weight: 500;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        /* Cards */
-        .glass-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 1.25rem;
-            margin-bottom: 1rem;
-            transition: all 0.3s ease;
-        }
-
-        .glass-card:hover {
-            border-color: var(--primary);
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
-        }
-
-        /* Article rows */
-        .article-row {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 1.25rem;
-            margin-bottom: 0.75rem;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .article-row:hover {
-            border-color: var(--primary);
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-lg);
-        }
-
-        .article-row.is-read {
-            opacity: 0.6;
-        }
-
-        .article-title {
-            flex: 1;
-        }
-
-        .article-title a {
-            color: var(--text-primary);
-            text-decoration: none;
-            font-weight: 500;
-            font-size: 0.9rem;
-        }
-
-        .article-title a:hover {
-            color: var(--primary);
-        }
-
-        .article-meta {
-            display: flex;
-            gap: 0.5rem;
-            align-items: center;
-            flex-shrink: 0;
-        }
-
-        /* Badges */
-        .badge-source {
-            font-size: 0.65rem;
-            padding: 0.2rem 0.5rem;
-            border-radius: 6px;
-            font-weight: 600;
-            white-space: nowrap;
-        }
-
-        .badge-hn,
-        .badge-tc,
-        .badge-reddit,
-        .badge-verge,
-        .badge-ars {
-            background: rgba(255, 255, 255, 0.1) !important;
-            color: var(--text-primary) !important;
-            border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        }
-
-        .badge-age {
-            font-size: 0.6rem;
-            padding: 0.15rem 0.4rem;
-            border-radius: 4px;
-        }
-
-        .age-fresh {
-            background: rgba(255, 255, 255, 0.15);
-            color: #fff;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-
-        .age-recent {
-            background: rgba(255, 255, 255, 0.05);
-            color: var(--text-secondary);
-        }
-
-        .age-old {
-            background: transparent;
-            color: var(--text-secondary);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .badge-sentiment {
-            font-size: 0.6rem;
-            padding: 0.15rem 0.4rem;
-            border-radius: 4px;
-        }
-
-        .sentiment-positive {
-            background: rgba(255, 255, 255, 0.1);
-            color: var(--text-primary);
-        }
-
-        .sentiment-negative {
-            background: rgba(255, 255, 255, 0.05);
-            color: var(--text-secondary);
-        }
-
-        .sentiment-neutral {
-            background: transparent;
-            color: var(--text-secondary);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .badge-category {
-            font-size: 0.6rem;
-            padding: 0.15rem 0.4rem;
-            border-radius: 4px;
-            background: rgba(255, 255, 255, 0.1);
-            color: var(--text-secondary);
-        }
-
-        /* Score pill */
-        .score-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.2rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--accent);
-        }
-
-        /* Action buttons */
-        .btn-icon {
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            padding: 0.25rem;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: all 0.2s;
-            border-radius: 6px;
-        }
-
-        .btn-icon:hover {
-            color: var(--primary);
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .btn-icon.active {
-            color: #fdcb6e;
-        }
-
-        .btn-icon.read-active {
-            color: var(--accent);
-        }
-
-        /* Search bar */
-        .search-bar {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 99px;
-            padding: 0.6rem 1.25rem;
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            transition: all 0.3s;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .search-bar:focus-within {
-            border-color: var(--primary);
-            box-shadow: 0 0 0 4px var(--primary-glow);
-            background: var(--bg-surface);
-        }
-
-        .search-bar input {
-            background: none;
-            border: none;
-            color: var(--text-primary);
-            outline: none;
-            flex: 1;
-            font-size: 0.95rem;
-        }
-
-        .search-bar input::placeholder {
-            color: var(--text-secondary);
-        }
-
-        /* Trending topics */
-        .trending-pill {
-            display: inline-block;
-            padding: 0.3rem 0.7rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 500;
-            background: rgba(255, 255, 255, 0.05);
-            color: var(--text-secondary);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            margin: 0.2rem;
-            transition: all 0.2s;
-            cursor: pointer;
-        }
-
-        .trending-pill:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: var(--primary);
-            color: var(--text-primary);
-        }
-
-        .trending-count {
-            font-size: 0.65rem;
-            color: var(--text-secondary);
-            margin-left: 0.2rem;
-        }
-
-        /* Pagination */
-        .pagination-custom .page-link {
-            background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text-secondary);
-            border-radius: 8px;
-            margin: 0 0.25rem;
-            font-size: 0.9rem;
-            transition: all 0.2s;
-            min-width: 36px;
-            text-align: center;
-        }
-
-        .pagination-custom .page-link:hover {
-            background: var(--bg-surface);
-            border-color: var(--text-secondary);
-            color: var(--text-primary);
-        }
-
-        .pagination-custom .page-item.active .page-link {
-            background: var(--primary);
-            border-color: var(--primary);
-            color: #000;
-            box-shadow: 0 4px 10px rgba(255, 255, 255, 0.2);
-        }
-
-        .pagination-custom .page-item.disabled .page-link {
-            opacity: 0.5;
-            background: transparent;
-            border-color: transparent;
-        }
-
-        /* Source health indicators */
-        .health-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 0.3rem;
-        }
-
-        .health-ok {
-            background: #fff;
-            box-shadow: 0 0 6px rgba(255, 255, 255, 0.5);
-        }
-
-        .health-error {
-            background: #525252;
-        }
-
-        .health-idle {
-            background: #262626;
-            border: 1px solid #525252;
-        }
-
-        /* Charts Section */
-        .chart-container {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 1rem;
-            height: 250px;
-        }
-
-        /* Filters row */
-        .filter-bar {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-
-        .filter-bar select,
-        .filter-bar .btn {
-            font-size: 0.8rem;
-            border-radius: 8px;
-        }
-
-        .filter-bar select {
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            color: var(--text-primary);
-            padding: 0.35rem 0.6rem;
-        }
-
-        /* Tabs */
-        .nav-tabs-custom {
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 1.5rem;
-            gap: 1rem;
-        }
-
-        .nav-tabs-custom .nav-link {
-            color: var(--text-secondary);
-            border: none;
-            padding: 0.75rem 0;
-            font-size: 0.95rem;
-            font-weight: 500;
-            background: transparent;
-            position: relative;
-            transition: all 0.2s;
-        }
-
-        .nav-tabs-custom .nav-link:hover {
-            color: var(--text-primary);
-        }
-
-        .nav-tabs-custom .nav-link.active {
-            color: var(--primary);
-            background: transparent;
-        }
-
-        .nav-tabs-custom .nav-link.active::after {
-            content: '';
-            position: absolute;
-            bottom: -1px;
-            left: 0;
-            width: 100%;
-            height: 2px;
-            background: var(--primary);
-            box-shadow: 0 -2px 10px var(--primary-glow);
-        }
-
-        /* Loading overlay */
-        .loading-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(5px);
-            z-index: 9999;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-        }
-
-        .loading-overlay.show {
-            display: flex;
-            animation: fadeIn 0.3s ease;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-            }
-
-            to {
-                opacity: 1;
-            }
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .article-meta {
-                display: none;
-            }
-
-            .article-row {
-                padding: 1rem;
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            .article-title {
-                width: 100%;
-            }
-        }
-
-        /* Modal custom */
-        .modal-content {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 24px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        }
-
-        .modal-header {
-            border-bottom: 1px solid var(--border);
-            padding: 1.5rem;
-        }
-
-        .modal-body {
-            padding: 1.5rem;
-        }
-
-        .modal-footer {
-            border-top: 1px solid var(--border);
-            padding: 1.5rem;
-        }
-
-        .btn-close-white {
-            filter: invert(1) grayscale(100%) brightness(200%);
-        }
-
-        /* Cluster header */
-        .cluster-header {
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-secondary);
-            padding: 0.5rem 0;
-            margin-top: 1rem;
-            border-top: 1px dashed var(--border);
-            font-weight: 600;
-        }
-
-        .cluster-header:first-child {
-            border-top: none;
-            margin-top: 0;
-        }
-
-        /* Read time */
-        .read-time {
-            font-size: 0.7rem;
-            color: var(--text-secondary);
-            white-space: nowrap;
-            background: rgba(255, 255, 255, 0.05);
-            padding: 0.1rem 0.4rem;
-            border-radius: 4px;
-        }
-
-        /* Footer */
-        .footer-section {
-            background: var(--bg-card);
-            border-top: 1px solid var(--border);
-            padding: 2rem 0;
-            margin-top: 3rem;
-        }
-
-        /* Scroll to top */
-        .scroll-top {
-            position: fixed;
-            bottom: 2rem;
-            right: 2rem;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: #fff;
-            color: #000;
-            border: none;
-            font-size: 1.1rem;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 100;
-            cursor: pointer;
-            box-shadow: 0 4px 15px var(--primary-glow);
-            transition: all 0.3s;
-        }
-
-        .scroll-top:hover {
-            transform: translateY(-3px);
-        }
-
-        .scroll-top.show {
-            display: flex;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-
-            .article-meta {
-                display: none;
-            }
-
-            .article-row {
-                padding: 0.7rem;
-            }
-        }
-
-        /* Modal custom */
-        .modal-content {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-        }
-
-        .modal-header {
-            border-bottom: 1px solid var(--border);
-        }
-
-        .modal-footer {
-            border-top: 1px solid var(--border);
-        }
-
-        /* Cluster header */
-        .cluster-header {
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-secondary);
-            padding: 0.3rem 0;
-            margin-top: 0.5rem;
-            border-top: 1px dashed var(--border);
-        }
-
-        .cluster-header:first-child {
-            border-top: none;
-            margin-top: 0;
-        }
-
-        /* Read time */
-        .read-time {
-            font-size: 0.65rem;
-            color: var(--text-secondary);
-            white-space: nowrap;
-        }
-    </style>
+    <meta name="theme-color" content="#0a0a0c">
+    <link rel="stylesheet" href="/static/css/app.css">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
 </head>
-
 <body>
-    <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay">
-        <div class="spinner-border text-light" role="status" style="width: 3rem; height: 3rem;">
-            <span class="visually-hidden">Loading...</span>
-        </div>
-        <h4 class="mt-3">Scraping all sources...</h4>
-        <p class="text-secondary">This might take a few seconds.</p>
-    </div>
-
     <!-- Navbar -->
-    <nav class="navbar navbar-custom sticky-top">
-        <div class="container d-flex justify-content-between align-items-center">
-            <a class="navbar-brand" href="/">
-                <i class="bi bi-layers-fill"></i> TechNews
+    <nav class="navbar" role="navigation" aria-label="Main navigation">
+        <div class="container navbar-inner">
+            <a href="/" class="brand" aria-label="TechNews Home">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <path d="M9 9h6M9 12h6M9 15h4"/>
+                </svg>
+                TechNews
             </a>
 
-            <div class="d-flex gap-3 align-items-center">
-                <!-- Main Scrape Button -->
-                <button type="submit" form="scrapeForm" name="refresh" value="true"
-                    class="btn d-flex align-items-center gap-2 shadow-sm"
-                    style="background: #f8fafc !important; color: #000 !important; border: none; font-weight: 600; padding: 0.5rem 1.2rem; border-radius: 99px;"
-                    onclick="document.getElementById('loadingOverlay').classList.add('show');">
-                    <i class="bi bi-cloud-download-fill"></i> Scrape Now
+            <div class="nav-actions">
+                <!-- Primary Scrape Button -->
+                <form id="scrapeForm" method="POST" action="/" style="display: inline;">
+                    <button type="submit" name="refresh" value="true" class="btn-primary"
+                            onclick="document.getElementById('loadingOverlay').classList.add('show');">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                            <polyline points="23 7 17 7 17 13"/>
+                        </svg>
+                        Refresh
+                    </button>
+                    <input type="hidden" name="pages" value="2">
+                </form>
+
+                <div style="width: 1px; height: 24px; background: var(--border-subtle); margin: 0 var(--space-2);"></div>
+
+                <!-- Nav Links -->
+                <nav class="nav-links" aria-label="View navigation">
+                    <a href="/" class="nav-link {% if not showing_saved %}active{% endif %}">Feed</a>
+                    <a href="/saved" class="nav-link {% if showing_saved %}active{% endif %}">Saved</a>
+                </nav>
+
+                <!-- Theme Toggle -->
+                <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark/light mode" title="Toggle theme">
+                    <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                    </svg>
+                    <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="12" cy="12" r="5"/>
+                        <line x1="12" y1="1" x2="12" y2="3"/>
+                        <line x1="12" y1="21" x2="12" y2="23"/>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                        <line x1="1" y1="12" x2="3" y2="12"/>
+                        <line x1="21" y1="12" x2="23" y2="12"/>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                    </svg>
                 </button>
 
-                <div class="vr mx-1 text-secondary opacity-25"></div>
-
-                <a href="/"
-                    class="btn btn-link text-decoration-none {% if not showing_saved %}text-white{% else %}text-secondary{% endif %}">
-                    Feed
-                </a>
-                <a href="/saved"
-                    class="btn btn-link text-decoration-none {% if showing_saved %}text-accent fw-bold{% else %}text-secondary{% endif %}">
-                    Saved
-                </a>
-
+                <!-- Dropdown Menu -->
                 <div class="dropdown">
-                    <button class="btn btn-icon dropdown-toggle" data-bs-toggle="dropdown">
-                        <i class="bi bi-three-dots-vertical"></i>
+                    <button class="dropdown-toggle" aria-expanded="false" aria-haspopup="true" aria-label="More options">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <circle cx="12" cy="12" r="1"/>
+                            <circle cx="19" cy="12" r="1"/>
+                            <circle cx="5" cy="12" r="1"/>
+                        </svg>
                     </button>
-                    <ul class="dropdown-menu dropdown-menu-dark shadow-lg border-0">
-                        <li>
-                            <h6 class="dropdown-header">Export Data</h6>
-                        </li>
-                        <li><a class="dropdown-item" href="/download"><i class="bi bi-filetype-csv me-2"></i> CSV
-                                (All)</a></li>
-                        <li><a class="dropdown-item" href="/export/json"><i class="bi bi-filetype-json me-2"></i>
-                                Bookmarks (JSON)</a></li>
-                        <li><a class="dropdown-item" href="/export/markdown"><i class="bi bi-markdown me-2"></i>
-                                Bookmarks (MD)</a></li>
-                    </ul>
+                    <div class="dropdown-menu" role="menu">
+                        <div class="dropdown-header">View</div>
+                        <!-- Density Toggle -->
+                        <div style="padding: var(--space-2) var(--space-3);">
+                            <div class="density-toggle" role="radiogroup" aria-label="Article density">
+                                <button type="button" class="density-btn" data-density="compact" title="Compact" aria-label="Compact density">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                                </button>
+                                <button type="button" class="density-btn active" data-density="comfortable" title="Comfortable" aria-label="Comfortable density">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="5" x2="21" y2="5"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="19" x2="21" y2="19"/></svg>
+                                </button>
+                                <button type="button" class="density-btn" data-density="spacious" title="Spacious" aria-label="Spacious density">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="4" x2="21" y2="4"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="20" x2="21" y2="20"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="dropdown-header">Source Health</div>
+                        <div id="sourceHealthList" class="source-health-list" style="padding: 0 var(--space-3);">
+                            <div class="source-health-item"><span class="source-health-dot idle"></span><span class="source-health-name">Loading…</span></div>
+                        </div>
+
+                        <div class="dropdown-divider" style="height:1px;background:var(--border-subtle);margin:var(--space-2) 0;"></div>
+                        <div class="dropdown-header">Export Data</div>
+                        <a href="/download" class="dropdown-item" role="menuitem">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <line x1="16" y1="13" x2="8" y2="13"/>
+                                <line x1="16" y1="17" x2="8" y2="17"/>
+                                <polyline points="10 9 9 9 8 9"/>
+                            </svg>
+                            CSV (All)
+                        </a>
+                        <a href="/export/json" class="dropdown-item" role="menuitem">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <line x1="16" y1="13" x2="8" y2="13"/>
+                                <line x1="16" y1="17" x2="8" y2="17"/>
+                                <polyline points="10 9 9 9 8 9"/>
+                            </svg>
+                            Bookmarks (JSON)
+                        </a>
+                        <a href="/export/markdown" class="dropdown-item" role="menuitem">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <line x1="16" y1="13" x2="8" y2="13"/>
+                                <line x1="16" y1="17" x2="8" y2="17"/>
+                                <polyline points="10 9 9 9 8 9"/>
+                            </svg>
+                            Bookmarks (MD)
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
     </nav>
 
-    <div class="container mt-4">
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay" role="alert" aria-live="polite" style="display:none;">
+        <div class="skeleton-title" style="width: 120px; height: 120px; border-radius: 50%; margin-bottom: var(--space-4);"></div>
+        <h3 style="margin: 0 0 var(--space-2);">Loading articles…</h3>
+        <p style="color: var(--text-muted); margin: 0;">Fetching latest tech news</p>
+    </div>
 
-        <!-- Stats -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-value">{{ stats.total if stats else 0 }}</div>
-                <div class="stat-label">Total Articles</div>
+    <main class="container" id="main-content">
+        <!-- Stats Bar — Bento Grid -->
+        <div class="stats-bar" role="region" aria-label="Statistics">
+            <div class="stat-card stat-card-primary">
+                <div class="stat-value tabular-nums">{{ stats.total if stats else 0 }}</div>
+                <div class="stat-label">Total</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{{ stats.today if stats else 0 }}</div>
-                <div class="stat-label">New Today</div>
+                <div class="stat-value tabular-nums">{{ stats.today if stats else 0 }}</div>
+                <div class="stat-label">Today</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{{ stats.saved if stats else 0 }}</div>
-                <div class="stat-label">Bookmarked</div>
+                <div class="stat-value tabular-nums">{{ stats.saved if stats else 0 }}</div>
+                <div class="stat-label">Saved</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{{ stats.read if stats else 0 }}</div>
+                <div class="stat-value tabular-nums">{{ stats.read if stats else 0 }}</div>
                 <div class="stat-label">Read</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{{ stats.by_source|length if stats and stats.by_source else 0 }}</div>
+                <div class="stat-value tabular-nums">{{ stats.by_source|length if stats and stats.by_source else 0 }}</div>
                 <div class="stat-label">Sources</div>
             </div>
         </div>
 
-        <!-- Main Content -->
-        <div id="main-content">
-            <!-- Search + Scrape Form -->
-            <form method="POST" action="/" id="scrapeForm">
-                <div class="row g-2 mb-3">
-                    <div class="col-md-5">
-                        <div class="search-bar">
-                            <i class="bi bi-search text-secondary"></i>
-                            <input type="text" name="keyword" placeholder="Search articles..."
-                                value="{{ keyword|default('') }}">
-                        </div>
-                    </div>
-                    <div class="col-auto">
-                        <select name="source" class="form-select form-select-sm"
-                            style="background:var(--bg-surface);border-color:var(--border);color:var(--text-primary);border-radius:8px;">
-                            <option value="all" {% if source_filter|default('all')=='all' %}selected{% endif %}>All
-                                Sources</option>
-                            <option value="Hacker News" {% if source_filter|default('')=='Hacker News' %}selected{%
-                                endif %}>Hacker News</option>
-                            <option value="TechCrunch" {% if source_filter|default('')=='TechCrunch' %}selected{% endif
-                                %}>TechCrunch</option>
-                            <option value="Reddit" {% if source_filter|default('')=='Reddit' %}selected{% endif %}>
-                                Reddit</option>
-                            <option value="The Verge" {% if source_filter|default('')=='The Verge' %}selected{% endif
-                                %}>The Verge</option>
-                            <option value="Ars Technica" {% if source_filter|default('')=='Ars Technica' %}selected{%
-                                endif %}>Ars Technica</option>
-                        </select>
-                    </div>
-                    <div class="col-auto">
-                        <select name="sort" class="form-select form-select-sm"
-                            style="background:var(--bg-surface);border-color:var(--border);color:var(--text-primary);border-radius:8px;">
-                            <option value="score" {% if sort_by|default('score')=='score' %}selected{% endif %}>Score ↓
-                            </option>
-                            <option value="comments" {% if sort_by|default('')=='comments' %}selected{% endif %}>
-                                Comments ↓</option>
-                            <option value="newest" {% if sort_by|default('')=='newest' %}selected{% endif %}>Newest
-                            </option>
-                        </select>
-                    </div>
-
-                    <div class="col-auto">
-                        <button type="submit" class="btn btn-sm btn-outline-secondary" style="border-radius:8px;">
-                            <i class="bi bi-funnel"></i> Apply Filter
-                        </button>
-                    </div>
-                    <!-- Old refresh button removed intentionally -->
-                    <input type="hidden" name="pages" value="2">
-                </div>
-            </form>
-
-            <!-- FTS Search -->
-            <div id="ftsSearchResults" class="mb-3" style="display:none;">
-                <div class="glass-card">
-                    <h6><i class="bi bi-search"></i> Full-Text Search Results</h6>
-                    <div id="ftsResults"></div>
-                </div>
+        <!-- Search & Filter Bar -->
+        <form method="POST" action="/" id="filterForm" class="search-filter-bar">
+            <div class="search-field">
+                <label for="searchInput">Search articles</label>
+                <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="search" id="searchInput" name="keyword" class="search-input"
+                       placeholder="Search articles…"
+                       value="{{ keyword|default('') }}"
+                       autocomplete="off">
             </div>
 
-            <!-- Articles List -->
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <small class="text-secondary">
-                    Showing {{ articles|length if articles else 0 }} of {{ total_count|default(0) }} articles
-                    {% if page|default(1) > 1 %} — Page {{ page }}{% endif %}
-                </small>
-                <div class="d-flex gap-1">
-                    <button class="btn-icon" onclick="fetchPersonalized()" title="Personalized Feed">
-                        <i class="bi bi-magic"></i>
-                    </button>
-                </div>
-            </div>
+            <div class="filter-group">
+                <!-- Always-visible: Source filter -->
+                <select name="source" class="select-native" aria-label="Filter by source">
+                    <option value="all" {% if source_filter|default('all')=='all' %}selected{% endif %}>All Sources</option>
+                    <option value="Hacker News" {% if source_filter|default('')=='Hacker News' %}selected{% endif %}>Hacker News</option>
+                    <option value="TechCrunch" {% if source_filter|default('')=='TechCrunch' %}selected{% endif %}>TechCrunch</option>
+                    <option value="Reddit" {% if source_filter|default('')=='Reddit' %}selected{% endif %}>Reddit</option>
+                    <option value="The Verge" {% if source_filter|default('')=='The Verge' %}selected{% endif %}>The Verge</option>
+                    <option value="Ars Technica" {% if source_filter|default('')=='Ars Technica' %}selected{% endif %}>Ars Technica</option>
+                </select>
 
-            {% if articles %}
+                <!-- Toggle button for advanced filters -->
+                <button type="button" class="filter-toggle" id="filterToggle" aria-expanded="false" aria-controls="advancedFilters">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:16px;height:16px">
+                        <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+                    </svg>
+                    <span class="filter-toggle-label">Filters</span>
+                    <svg class="filter-toggle-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:14px;height:14px">
+                        <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                </button>
+
+                <!-- Advanced filters (collapsible) -->
+                <div class="advanced-filters" id="advancedFilters" aria-hidden="true">
+                    <select name="category" class="select-native" aria-label="Filter by category">
+                        <option value="all" {% if category_filter|default('all')=='all' %}selected{% endif %}>All Categories</option>
+                        <option value="AI & ML" {% if category_filter|default('')=='AI & ML' %}selected{% endif %}>AI & ML</option>
+                        <option value="Security" {% if category_filter|default('')=='Security' %}selected{% endif %}>Security</option>
+                        <option value="Hardware" {% if category_filter|default('')=='Hardware' %}selected{% endif %}>Hardware</option>
+                        <option value="Software" {% if category_filter|default('')=='Software' %}selected{% endif %}>Software</option>
+                        <option value="Business" {% if category_filter|default('')=='Business' %}selected{% endif %}>Business</option>
+                        <option value="Science" {% if category_filter|default('')=='Science' %}selected{% endif %}>Science</option>
+                        <option value="Gaming" {% if category_filter|default('')=='Gaming' %}selected{% endif %}>Gaming</option>
+                        <option value="Social Media" {% if category_filter|default('')=='Social Media' %}selected{% endif %}>Social Media</option>
+                        <option value="General" {% if category_filter|default('')=='General' %}selected{% endif %}>General</option>
+                    </select>
+
+                    <select name="sort" class="select-native" aria-label="Sort order">
+                        <option value="score" {% if sort_by|default('score')=='score' %}selected{% endif %}>Score ↓</option>
+                        <option value="newest" {% if sort_by|default('')=='newest' %}selected{% endif %}>Newest</option>
+                        <option value="comments" {% if sort_by|default('')=='comments' %}selected{% endif %}>Comments ↓</option>
+                    </select>
+
+                    <label class="filter-checkbox">
+                        <input type="checkbox" name="saved_only" value="1" {% if saved_only %}checked{% endif %}>
+                        <span>Saved only</span>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn-secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width: 16px; height: 16px;">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.15 2.5 18.95 22 3"/>
+                    </svg>
+                    Apply
+                </button>
+            </div>
+        </form>
+                </label>
+
+                <button type="submit" class="btn-secondary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width: 16px; height: 16px;">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.15 2.5 18.95 22 3"/>
+                    </svg>
+                    Apply
+                </button>
+            </div>
+        </form>
+
+        <!-- Articles Header -->
+        <header class="articles-header">
+            <p class="articles-count">
+                Showing <strong>{{ articles|length if articles else 0 }}</strong> of <strong>{{ total_count|default(0) }}</strong> articles
+                {% if page|default(1) > 1 %} — Page {{ page }}{% endif %}
+            </p>
+            <button class="personalized-btn" id="personalizedBtn" aria-label="Show personalized recommendations" title="Personalized feed">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>
+            </button>
+        </header>
+
+        <!-- Articles List -->
+        {% if articles %}
+        <div class="articles-list" role="feed" aria-label="Articles">
             {% for article in articles %}
-            <div class="article-row {% if article.is_read %}is-read{% endif %}"
-                id="article-{{ article.id if article.id else loop.index }}">
-                <div class="score-pill" style="min-width: 45px;">
-                    <i class="bi bi-caret-up-fill"></i>
-                    {{ article.score if article.score else 0 }}
-                </div>
-                <div class="article-title">
-                    <a href="{{ article.link }}" target="_blank" rel="noopener">
-                        {{ article['title'] }}
-                    </a>
-                    <div class="d-flex gap-1 mt-1 flex-wrap">
-                        {% set src = article.source|default('') %}
-                        <span
-                            class="badge-source {% if 'Hacker' in src %}badge-hn{% elif 'TechCrunch' in src %}badge-tc{% elif 'Reddit' in src %}badge-reddit{% elif 'Verge' in src %}badge-verge{% elif 'Ars' in src %}badge-ars{% endif %}">{{
-                            src }}</span>
-                        {% if article.category and article.category != 'general' and article.category != 'General' %}
-                        <span class="badge-category">{{ article.category }}</span>
-                        {% endif %}
-                        {% if article.sentiment and article.sentiment != 'neutral' %}
-                        <span class="badge-sentiment sentiment-{{ article.sentiment }}">
-                            {% if article.sentiment == 'positive' %}😊{% else %}😟{% endif %} {{ article.sentiment }}
-                        </span>
-                        {% endif %}
-                        {% if article.read_time %}
-                        <span class="read-time"><i class="bi bi-clock"></i> {{ article.read_time }} min</span>
-                        {% endif %}
-                    </div>
-                </div>
-                <div class="article-meta">
-                    <small class="text-secondary">{{ article.comments|default('0') }} <i
-                            class="bi bi-chat-dots"></i></small>
-                    <button class="btn-icon {% if article.is_saved %}active{% endif %}"
-                        onclick="toggleBookmark({{ article.id }}, this)" title="Bookmark">
-                        <i class="bi {% if article.is_saved %}bi-bookmark-fill{% else %}bi-bookmark{% endif %}"></i>
-                    </button>
-                    <button class="btn-icon {% if article.is_read %}read-active{% endif %}"
-                        onclick="toggleRead({{ article.id }}, this)" title="Mark as read">
-                        <i class="bi {% if article.is_read %}bi-check-circle-fill{% else %}bi-circle{% endif %}"></i>
-                    </button>
-                    <button class="btn-icon" onclick="summarizeArticle('{{ article.link }}')" title="AI Summary">
-                        <i class="bi bi-stars"></i>
-                    </button>
-                </div>
-            </div>
-            {% endfor %}
-            {% else %}
-            <div class="glass-card text-center py-5">
-                <i class="bi bi-newspaper" style="font-size:3rem;color:var(--text-secondary);"></i>
-                <h5 class="mt-3 text-secondary">No articles yet</h5>
-                <p class="text-secondary">Click <strong>Refresh</strong> to scrape the latest tech news.</p>
-            </div>
-            {% endif %}
+            <article class="article-card {% if article.is_read %}is-read{% endif %} {% if article.excerpt %}has-excerpt{% endif %}"
+                     id="article-{{ article.id }}"
+                     style="--source-color: {{ article.source_color|default('#52525b') }}"
+                     data-article-id="{{ article.id }}"
+                     data-source="{{ article.source }}">
+                {% if article.thumbnail %}
+                <img src="{{ article.thumbnail }}" alt="" class="article-thumb" loading="lazy" decoding="async">
+                {% endif %}
 
-            <!-- Pagination -->
-            {% if total_pages|default(1) > 1 %}
-            <nav class="mt-3">
-                <ul class="pagination pagination-custom justify-content-center">
-                    <li class="page-item {% if page <= 1 %}disabled{% endif %}">
-                        <a class="page-link"
-                            href="?page={{ page - 1 }}&sort={{ sort_by|default('score') }}&source={{ source_filter|default('all') }}&keyword={{ keyword|default('') }}">
-                            <i class="bi bi-chevron-left"></i>
-                        </a>
-                    </li>
-                    {% for p in range(1, total_pages + 1) %}
-                    {% if p <= 3 or p> total_pages - 3 or (p >= page - 1 and p <= page + 1) %} <li
-                            class="page-item {% if p == page %}active{% endif %}">
-                            <a class="page-link"
-                                href="?page={{ p }}&sort={{ sort_by|default('score') }}&source={{ source_filter|default('all') }}&keyword={{ keyword|default('') }}">{{
-                                p }}</a>
-                            </li>
-                            {% elif p == 4 or p == total_pages - 3 %}
-                            <li class="page-item disabled"><span class="page-link">…</span></li>
-                            {% endif %}
-                            {% endfor %}
-                            <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
-                                <a class="page-link"
-                                    href="?page={{ page + 1 }}&sort={{ sort_by|default('score') }}&source={{ source_filter|default('all') }}&keyword={{ keyword|default('') }}">
-                                    <i class="bi bi-chevron-right"></i>
-                                </a>
-                            </li>
-                </ul>
-            </nav>
-            {% endif %}
+                <h2 class="article-title">
+                    <a href="{{ article.link }}" target="_blank" rel="noopener noreferrer">{{ article.title }}</a>
+                </h2>
+
+                {% if article.excerpt %}
+                <p class="article-excerpt">{{ article.excerpt }}</p>
+                {% endif %}
+
+                <div class="article-meta">
+                    <span class="source-badge">
+                        <span style="width: 8px; height: 8px; border-radius: 50%; background: {{ article.source_color|default('#52525b') }}; flex-shrink: 0;"></span>
+                        {{ article.source }}
+                    </span>
+
+                    <span class="meta-item">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <line x1="18" y1="20" x2="18" y2="10"/>
+                            <line x1="12" y1="20" x2="12" y2="4"/>
+                            <line x1="6" y1="20" x2="6" y2="14"/>
+                        </svg>
+                        <span class="tabular-nums">{{ article.score|default(0) }}</span>
+                    </span>
+
+                    <span class="meta-item">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+                        </svg>
+                        {{ article.time|default('Recent') }}
+                    </span>
+
+                    <span class="meta-item">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        <span class="tabular-nums">{{ article.comments|default('0') }}</span>
+                    </span>
+
+                    {% if article.category and article.category != 'general' and article.category != 'General' %}
+                    <span class="category-badge">{{ article.category }}</span>
+                    {% endif %}
+
+                    {% if article.sentiment and article.sentiment != 'neutral' %}
+                    <span class="sentiment-badge sentiment-{{ article.sentiment }}">
+                        {% if article.sentiment == 'positive' %}
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width: 12px; height: 12px;">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-4-12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm8 0c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2z"/>
+                        </svg>
+                        Positive
+                        {% else %}
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="width: 12px; height: 12px;">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-4-12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm8 0c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2z"/>
+                        </svg>
+                        Negative
+                        {% endif %}
+                    </span>
+                    {% endif %}
+
+                    {% if article.read_time %}
+                    <span class="read-time">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                        {{ article.read_time }} min
+                    </span>
+                    {% endif %}
+                </div>
+
+                <div class="article-actions">
+                    <button class="icon-btn {% if article.is_saved %}active{% endif %}"
+                            onclick="toggleBookmark({{ article.id }}, this)"
+                            aria-label="{% if article.is_saved %}Remove bookmark{% else %}Bookmark{% endif %}"
+                            title="{% if article.is_saved %}Remove bookmark{% else %}Bookmark{% endif %}">
+                        <svg viewBox="0 0 24 24" fill="{% if article.is_saved %}currentColor{% else %}none{% endif %}" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+                        </svg>
+                    </button>
+
+                    <button class="icon-btn {% if article.is_read %}read-active{% endif %}"
+                            onclick="toggleRead({{ article.id }}, this)"
+                            aria-label="{% if article.is_read %}Mark as unread{% else %}Mark as read{% endif %}"
+                            title="{% if article.is_read %}Mark as unread{% else %}Mark as read{% endif %}">
+                        <svg viewBox="0 0 24 24" fill="{% if article.is_read %}currentColor{% else %}none{% endif %}" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                            <polyline points="22 4 12 14.01 9 11.01"/>
+                        </svg>
+                    </button>
+
+                    <button class="icon-btn"
+                            onclick="summarizeArticle('{{ article.link }}')"
+                            aria-label="AI Summary"
+                            title="AI Summary">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                        </svg>
+                    </button>
+                </div>
+            </article>
+            {% endfor %}
         </div>
 
+        <!-- Load More -->
+        {% if total_pages|default(1) > page|default(1) %}
+        <div class="pagination">
+            <button type="button" class="load-more-btn" id="loadMoreBtn"
+                    data-next-page="{{ page|default(1) + 1 }}"
+                    data-sort="{{ sort_by|default('score') }}"
+                    data-source="{{ source_filter|default('all') }}"
+                    data-keyword="{{ keyword|default('') }}"
+                    data-category="{{ category_filter|default('all') }}"
+                    data-saved-only="{{ '1' if saved_only else '' }}">
+                <span class="btn-text">Load more</span>
+                <span class="spinner" style="display: none;"></span>
+            </button>
+        </div>
+        {% endif %}
 
-
-    </div>
+        {% else %}
+        <!-- Empty State -->
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+                <polyline points="10 9 9 9 8 9"/>
+            </svg>
+            <h3>No articles yet</h3>
+            <p>Click <strong>Refresh</strong> to fetch the latest tech news from all sources.</p>
+        </div>
+        {% endif %}
+    </main>
 
     <!-- Footer -->
-    <footer class="footer-section">
-        <div class="container">
-            <div class="row">
-                <div class="col-md-6">
-                    <h6>Subscribe for Daily Digest</h6>
-                    <form id="subscribeForm" class="d-flex gap-2 mt-2">
-                        <input type="email" id="subscribeEmail" class="form-control form-control-sm"
-                            placeholder="your@email.com"
-                            style="background:var(--bg-surface);border-color:var(--border);color:var(--text-primary);border-radius:8px;max-width:300px;">
-                        <button type="submit" class="btn btn-sm btn-primary"
-                            style="border-radius:8px;">Subscribe</button>
-                    </form>
-                    <div id="subscribeMessage" class="mt-2"></div>
-                </div>
-                <div class="col-md-6 text-md-end mt-3 mt-md-0">
-                    <small class="text-secondary">
-                        Tech News Aggregator — Built with Flask, Bootstrap &amp; ❤️
-                        <br>Data from HN, TechCrunch, Reddit, The Verge, Ars Technica
-                    </small>
-                </div>
+    <footer class="footer" role="contentinfo">
+        <div class="container footer-inner">
+            <div class="footer-subscribe">
+                <h4>Daily Digest</h4>
+                <form class="subscribe-form" id="subscribeForm">
+                    <label for="subscribeEmail" style="position: absolute; width: 1px; height: 1px; overflow: hidden;">Email address</label>
+                    <input type="email" id="subscribeEmail" name="email" placeholder="your@email.com" autocomplete="email" required>
+                    <button type="submit">Subscribe</button>
+                </form>
+                <div id="subscribeMessage" aria-live="polite"></div>
             </div>
+            <p class="footer-copyright">
+                Tech News Aggregator — Built with Flask, SQLite & ❤️<br>
+                Data from HN, TechCrunch, Reddit, The Verge, Ars Technica
+            </p>
         </div>
     </footer>
 
     <!-- Summary Modal -->
-    <div class="modal fade" id="summaryModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="summaryTitle">Article Summary</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+    <div class="modal-overlay" id="summaryModal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
+        <div class="modal">
+            <header class="modal-header">
+                <h3 id="summaryTitle">Article Summary</h3>
+                <button class="modal-close" onclick="closeSummaryModal()" aria-label="Close summary">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </header>
+            <div class="modal-body" id="summaryBody">
+                <div style="text-align: center; padding: var(--space-6);">
+                    <div class="skeleton-title" style="width: 60px; height: 60px; border-radius: 50%; margin: 0 auto var(--space-4);"></div>
+                    <p style="color: var(--text-secondary); margin: 0;">Generating AI summary…</p>
                 </div>
-                <div class="modal-body" id="summaryBody">
-                    <div class="text-center py-4">
-                        <div class="spinner-border text-primary" role="status"></div>
-                        <p class="mt-2 text-secondary">Generating AI summary...</p>
-                    </div>
+            </div>
+            <footer class="modal-footer">
+                <a href="#" id="summaryReadLink" target="_blank" rel="noopener" class="btn-secondary" style="display: none;">
+                    Read Full Article →
+                </a>
+            </footer>
+        </div>
+    </div>
+
+    <!-- Command Palette -->
+    <div class="command-palette-overlay" id="commandPalette" role="dialog" aria-modal="true" aria-label="Command palette">
+        <div class="command-palette">
+            <div class="command-palette-input-wrapper">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:20px;height:20px;color:var(--text-muted)">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="commandInput" class="command-palette-input" placeholder="Type a command or search…"
+                       autocomplete="off" aria-label="Search commands">
+                <kbd class="command-palette-esc">Esc</kbd>
+            </div>
+            <div class="command-palette-list" id="commandList" role="listbox">
+                <div class="command-group">
+                    <div class="command-group-label">Navigation</div>
+                    <button class="command-item" role="option" data-action="go-feed">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+                        <span>Go to Feed</span>
+                        <kbd>G F</kbd>
+                    </button>
+                    <button class="command-item" role="option" data-action="go-saved">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                        <span>Go to Saved</span>
+                        <kbd>G S</kbd>
+                    </button>
+                </div>
+                <div class="command-group">
+                    <div class="command-group-label">Actions</div>
+                    <button class="command-item" role="option" data-action="refresh">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/><polyline points="23 7 17 7 17 13"/></svg>
+                        <span>Refresh Feed</span>
+                        <kbd>R</kbd>
+                    </button>
+                    <button class="command-item" role="option" data-action="search">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <span>Focus Search</span>
+                        <kbd>/</kbd>
+                    </button>
+                    <button class="command-item" role="option" data-action="toggle-theme">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                        <span>Toggle Theme</span>
+                        <kbd>T</kbd>
+                    </button>
+                </div>
+                <div class="command-group">
+                    <div class="command-group-label">Export</div>
+                    <button class="command-item" role="option" data-action="export-csv">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span>Export CSV</span>
+                        <kbd>E C</kbd>
+                    </button>
+                    <button class="command-item" role="option" data-action="export-json">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span>Export Bookmarks (JSON)</span>
+                        <kbd>E J</kbd>
+                    </button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Scroll to top -->
-    <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})">
-        <i class="bi bi-chevron-up"></i>
+    <!-- Keyboard Shortcuts Help -->
+    <div class="shortcuts-help" id="shortcutsHelp" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
+        <div class="shortcuts-panel">
+            <h3 id="shortcutsTitle">Keyboard Shortcuts</h3>
+            <div class="shortcuts-list">
+                <kbd>J</kbd><span>Next article</span>
+                <kbd>K</kbd><span>Previous article</span>
+                <kbd>O</kbd><span>Open article</span>
+                <kbd>B</kbd><span>Toggle bookmark</span>
+                <kbd>R</kbd><span>Toggle read</span>
+                <kbd>/</kbd><span>Focus search</span>
+                <kbd>F</kbd><span>Toggle focus mode</span>
+                <kbd>T</kbd><span>Toggle theme</span>
+                <kbd>⌘K</kbd><span>Command palette</span>
+                <kbd>?</kbd><span>Show this help</span>
+                <kbd>Esc</kbd><span>Close modal / help</span>
+            </div>
+            <button class="btn-secondary shortcuts-close" onclick="closeShortcutsHelp()">Got it</button>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- Scroll to Top -->
+    <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Scroll to top">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <line x1="12" y1="19" x2="12" y2="5"/>
+            <polyline points="5 12 12 5 19 12"/>
+        </svg>
     </button>
 
     <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-
-        // ── Bookmark Toggle ──
-        async function toggleBookmark(articleId, btn) {
-            btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
-            try {
-                const resp = await fetch('/bookmark', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ article_id: articleId })
-                });
-                const data = await resp.json();
-                if (data.status === 'saved') {
-                    btn.classList.add('active');
-                    btn.innerHTML = '<i class="bi bi-bookmark-fill"></i>';
-                } else {
-                    btn.classList.remove('active');
-                    btn.innerHTML = '<i class="bi bi-bookmark"></i>';
-                }
-            } catch (e) {
-                btn.innerHTML = '<i class="bi bi-bookmark"></i>';
-            }
-        }
-
-        // ── Read Toggle ──
-        async function toggleRead(articleId, btn) {
-            try {
-                const resp = await fetch('/toggle_read', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ article_id: articleId })
-                });
-                const data = await resp.json();
-                const row = btn.closest('.article-row');
-                if (data.status === 'read') {
-                    btn.classList.add('read-active');
-                    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
-                    row.classList.add('is-read');
-                } else {
-                    btn.classList.remove('read-active');
-                    btn.innerHTML = '<i class="bi bi-circle"></i>';
-                    row.classList.remove('is-read');
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        // ── Summarize ──
-        async function summarizeArticle(url) {
-            const modal = new bootstrap.Modal(document.getElementById('summaryModal'));
-            document.getElementById('summaryBody').innerHTML =
-                '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-secondary">Generating AI summary...</p></div>';
-            modal.show();
-
-            try {
-                const resp = await fetch('/api/summarize', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url })
-                });
-                const data = await resp.json();
-                if (data.error) {
-                    document.getElementById('summaryBody').innerHTML =
-                        `<div class="alert alert-danger">${data.error}</div>`;
-                } else {
-                    document.getElementById('summaryTitle').textContent = data.title || 'Summary';
-                    let html = '';
-                    if (data.top_image) {
-                        html += `<img src="${data.top_image}" class="img-fluid rounded mb-3" style="max-height:200px;object-fit:cover;width:100%;">`;
-                    }
-                    html += `<p>${data.summary}</p>`;
-                    html += `<a href="${url}" target="_blank" class="btn btn-sm btn-outline-primary">Read Full Article →</a>`;
-                    document.getElementById('summaryBody').innerHTML = html;
-                }
-            } catch (e) {
-                document.getElementById('summaryBody').innerHTML =
-                    '<div class="alert alert-danger">Failed to connect to server.</div>';
-            }
-        }
-
-
-
-        // ── Personalized Feed ──
-        async function fetchPersonalized() {
-            try {
-                const resp = await fetch('/api/personalized');
-                const data = await resp.json();
-                if (data.articles && data.articles.length > 0) {
-                    alert(`Found ${data.articles.length} personalized recommendations! Feature coming soon to the UI.`);
-                } else {
-                    alert('Bookmark some articles first to get personalized recommendations!');
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        // ── Subscribe ──
-        const subscribeForm = document.getElementById('subscribeForm');
-        if (subscribeForm) {
-            subscribeForm.addEventListener('submit', async function (e) {
-                e.preventDefault();
-                const email = document.getElementById('subscribeEmail').value;
-                const msg = document.getElementById('subscribeMessage');
-                try {
-                    const resp = await fetch('/subscribe', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email })
-                    });
-                    const data = await resp.json();
-                    if (resp.ok) {
-                        msg.textContent = data.message;
-                        msg.className = 'mt-2 text-success';
-                        subscribeForm.reset();
-                    } else {
-                        msg.textContent = data.error;
-                        msg.className = 'mt-2 text-danger';
-                    }
-                } catch (e) {
-                    msg.textContent = 'Error connecting to server.';
-                    msg.className = 'mt-2 text-danger';
-                }
-            });
-        }
-
-        // ── Scroll to top ──
-        window.addEventListener('scroll', () => {
-            const btn = document.getElementById('scrollTop');
-            if (window.scrollY > 400) { btn.classList.add('show'); }
-            else { btn.classList.remove('show'); }
-        });
-
-        // ── PWA Registration ──
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/service-worker.js')
-                .then(() => console.log('SW registered'))
-                .catch(err => console.log('SW registration failed:', err));
-        }
-    </script>
+    <script src="/static/js/app.js"></script>
 </body>
-
 </html>

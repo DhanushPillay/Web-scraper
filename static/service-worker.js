@@ -1,24 +1,18 @@
 // Service Worker — Tech News Aggregator
-const CACHE_NAME = 'technews-v1';
-const urlsToCache = [
+const CACHE_NAME = 'technews-v2';
+const APP_SHELL = [
     '/',
-    'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css',
-    'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css',
-    'https://cdn.jsdelivr.net/npm/chart.js'
+    '/static/css/app.css',
+    '/static/js/app.js',
 ];
 
 self.addEventListener('install', event => {
     event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
-    );
-});
-
-self.addEventListener('fetch', event => {
-    event.respondWith(
-        caches.match(event.request).then(response => {
-            return response || fetch(event.request);
+        caches.open(CACHE_NAME).then(cache => {
+            return cache.addAll(APP_SHELL);
         })
     );
+    self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
@@ -29,5 +23,34 @@ self.addEventListener('activate', event => {
                 .map(name => caches.delete(name))
             )
         )
+    );
+    self.clients.claim();
+});
+
+self.addEventListener('fetch', event => {
+    const url = new URL(event.request.url);
+
+    // Network-first for API calls and dynamic data
+    if (url.pathname.startsWith('/api/') || url.pathname === '/bookmark' || url.pathname === '/toggle_read') {
+        event.respondWith(
+            fetch(event.request).catch(() => caches.match(event.request))
+        );
+        return;
+    }
+
+    // Stale-while-revalidate for app shell
+    event.respondWith(
+        caches.open(CACHE_NAME).then(cache => {
+            return cache.match(event.request).then(cached => {
+                const fetched = fetch(event.request).then(response => {
+                    if (response.ok) {
+                        cache.put(event.request, response.clone());
+                    }
+                    return response;
+                }).catch(() => cached);
+
+                return cached || fetched;
+            });
+        })
     );
 });

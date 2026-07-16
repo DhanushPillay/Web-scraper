@@ -27,6 +27,26 @@ from database import Database
 from newspaper import Article
 import nltk
 
+# Security extensions
+try:
+    from flask_talisman import Talisman
+    _talisman_available = True
+except ImportError:
+    _talisman_available = False
+
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    _limiter_available = True
+except ImportError:
+    _limiter_available = False
+
+try:
+    from flask_cors import CORS
+    _cors_available = True
+except ImportError:
+    _cors_available = False
+
 # Attempt to import optional dependencies
 try:
     from nltk.sentiment.vader import SentimentIntensityAnalyzer
@@ -51,6 +71,92 @@ for resource in ['tokenizers/punkt', 'tokenizers/punkt_tab',
         nltk.download(resource.split('/')[-1].replace('.zip', ''), quiet=True)
 
 app = Flask(__name__)
+
+# ──────────────────────────────────────────────
+# Security Hardening
+# ──────────────────────────────────────────────
+
+# Trusted hosts (Flask 3.1+) — prevent Host header attacks
+trusted_hosts = os.getenv('TRUSTED_HOSTS', '').split(',') if os.getenv('TRUSTED_HOSTS') else ['localhost', '127.0.0.1']
+app.config['TRUSTED_HOSTS'] = [h.strip() for h in trusted_hosts if h.strip()]
+
+# Request size limits (DoS mitigation)
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
+app.config['MAX_FORM_MEMORY_SIZE'] = 500 * 1024     # 500 KB
+app.config['MAX_FORM_PARTS'] = 100
+
+# Secret key & rotation (Flask 3.1+)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', os.urandom(32).hex())
+fallbacks = os.getenv('SECRET_KEY_FALLBACKS', '')
+if fallbacks:
+    app.config['SECRET_KEY_FALLBACKS'] = [k.strip() for k in fallbacks.split(',') if k.strip()]
+
+# Session cookie hardening (even though no auth, defense in depth)
+app.config.update(
+    SESSION_COOKIE_SECURE=True,           # HTTPS only
+    SESSION_COOKIE_HTTPONLY=True,         # No JS access
+    SESSION_COOKIE_SAMESITE='Lax',        # CSRF mitigation
+    SESSION_COOKIE_PARTITIONED=True,      # CHIPS (Flask 3.1+)
+)
+
+# Security headers via Talisman
+if _talisman_available:
+    csp = {
+        'default-src': ["'self'"],
+        'script-src': ["'self'", "'unsafe-inline'"],  # inline scripts for now
+        'style-src': ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+        'img-src': ["'self'", 'data:', 'https:'],
+        'font-src': ["'self'", 'https://cdn.jsdelivr.net'],
+        'connect-src': ["'self'"],
+        'frame-ancestors': ["'none'"],
+        'base-uri': ["'self'"],
+        'form-action': ["'self'"],
+    }
+    talisman = Talisman(
+        app,
+        content_security_policy=csp,
+        force_https=False,  # PythonAnywhere handles TLS termination
+        strict_transport_security=True,
+        strict_transport_security_max_age=31536000,
+        strict_transport_security_include_subdomains=True,
+        frame_options='SAMEORIGIN',
+        x_content_type_options='nosniff',
+        referrer_policy='strict-origin-when-cross-origin',
+        permissions_policy={
+            'geolocation': '()',
+            'microphone': '()',
+            'camera': '()',
+        },
+    )
+else:
+    logger.warning("Flask-Talisman not available. Security headers disabled.")
+
+# Rate limiting
+if _limiter_available:
+    storage_uri = os.getenv('RATE_LIMIT_STORAGE', 'memory://')
+    limiter = Limiter(
+        key_func=get_remote_address,
+        app=app,
+        default_limits=["200 per hour", "50 per minute"],
+        storage_uri=storage_uri,
+        strategy="fixed-window",
+    )
+    # Stricter limits on mutation endpoints
+    limiter.limit("30 per minute")(lambda: None)  # placeholder, applied via decorators below
+else:
+    limiter = None
+    logger.warning("Flask-Limiter not available. Rate limiting disabled.")
+
+# CORS — explicit origins only
+if _cors_available:
+    allowed_origins = os.getenv('ALLOWED_ORIGINS', '').split(',') if os.getenv('ALLOWED_ORIGINS') else []
+    allowed_origins = [o.strip() for o in allowed_origins if o.strip()]
+    if allowed_origins:
+        CORS(app, origins=allowed_origins, supports_credentials=False)
+    else:
+        logger.info("ALLOWED_ORIGINS not set. CORS disabled for API endpoints.")
+else:
+    logger.warning("Flask-CORS not available. CORS not configured.")
 
 # Initialize Database & Aggregator (shared instance for caching)
 db = Database()
@@ -512,7 +618,18 @@ def index():
 # API Routes
 # ──────────────────────────────────────────────
 
+# Rate limit decorator helper
+def rate_limit(limit_str: str):
+    """Apply rate limit if limiter is available."""
+    def decorator(f):
+        if limiter:
+            return limiter.limit(limit_str)(f)
+        return f
+    return decorator
+
+
 @app.route('/bookmark', methods=['POST'])
+@rate_limit("30 per minute")
 def bookmark() -> ResponseReturnValue:
     """Toggles article bookmark status."""
     data = get_json_payload()
@@ -531,6 +648,7 @@ def bookmark() -> ResponseReturnValue:
 
 
 @app.route('/toggle_read', methods=['POST'])
+@rate_limit("30 per minute")
 def toggle_read() -> ResponseReturnValue:
     """Toggles article read status."""
     data = get_json_payload()
@@ -549,6 +667,7 @@ def toggle_read() -> ResponseReturnValue:
 
 
 @app.route('/subscribe', methods=['POST'])
+@rate_limit("10 per hour")
 def subscribe() -> ResponseReturnValue:
     """Handle email subscription."""
     data = get_json_payload()
@@ -598,6 +717,7 @@ def api_personalized() -> ResponseReturnValue:
 
 
 @app.route('/api/summarize', methods=['POST'])
+@rate_limit("20 per minute")
 def summarize() -> ResponseReturnValue:
     """Summarizes a given URL using newspaper3k."""
     data = get_json_payload()
@@ -788,9 +908,52 @@ def start_scheduler() -> None:
     logger.info("Background scheduler started (scraping every 15 minutes)")
 
 
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
-    # Process any unprocessed articles on startup
+# Initialize scheduler and process metadata on app startup (for both local and production)
+# This runs when app module is imported (e.g., by Gunicorn on PythonAnywhere)
+try:
     process_articles_metadata()
     start_scheduler()
+except Exception as e:
+    logger.error(f"Failed to initialize scheduler or process metadata: {e}")
+
+
+# ──────────────────────────────────────────────
+# Error Handlers (Security)
+# ──────────────────────────────────────────────
+
+if _limiter_available:
+    from flask_limiter.errors import RateLimitExceeded
+
+    @app.errorhandler(RateLimitExceeded)
+    def handle_rate_limit(e):
+        return jsonify({
+            'error': 'rate_limit_exceeded',
+            'message': 'Too many requests. Please slow down.',
+            'retry_after': e.retry_after
+        }), 429
+
+
+@app.errorhandler(400)
+def handle_bad_request(e):
+    return jsonify({'error': 'bad_request', 'message': 'Invalid request'}), 400
+
+
+@app.errorhandler(404)
+def handle_not_found(e):
+    return jsonify({'error': 'not_found', 'message': 'Resource not found'}), 404
+
+
+@app.errorhandler(413)
+def handle_payload_too_large(e):
+    return jsonify({'error': 'payload_too_large', 'message': 'Request body too large'}), 413
+
+
+@app.errorhandler(500)
+def handle_server_error(e):
+    logger.error(f"Internal server error: {e}")
+    return jsonify({'error': 'internal_error', 'message': 'Something went wrong'}), 500
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     app.run(debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')
