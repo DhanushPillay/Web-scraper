@@ -155,13 +155,15 @@ html {
 }
 
 body {
-  margin: 0;
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  line-height: var(--leading-normal);
+  background: radial-gradient(circle at top right, #1a1a2e, #0a0a0c 50%, #050505 100%);
   color: var(--text-primary);
-  background: var(--bg-deep);
+  font-family: var(--font-sans);
+  line-height: var(--line-height-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Subtle page texture — optical, not mathematical */
@@ -708,59 +710,39 @@ body.density-spacious .article-title { font-size: var(--text-lg); }
   .articles-list { column-count: 3; }
 }
 
-/* Article Card — Clean, content-driven layout */
+/* Article Card — Concept 1 Mockup Match */
 .article-card {
   display: flex;
   flex-direction: column;
   break-inside: avoid;
   margin-bottom: var(--space-4);
-  gap: var(--space-3);
-  padding: var(--space-5);
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 0 10px rgba(255,255,255,0.02), 0 0 15px color-mix(in srgb, var(--source-color) 20%, transparent);
   transition: all var(--transition-normal);
   text-decoration: none;
   color: inherit;
   position: relative;
+  overflow: hidden;
 }
 .article-card:hover {
-  border-color: var(--border-muted);
-  box-shadow: var(--shadow-card-hover);
-  transform: translateY(-3px) scale(1.005);
-  background: var(--bg-elevated);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4), inset 0 0 15px rgba(255,255,255,0.05), 0 0 30px var(--source-color);
+  transform: translateY(-4px) scale(1.01);
+  background: rgba(255, 255, 255, 0.05);
 }
 .article-card:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
 
-.article-actions {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: auto;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-subtle);
-}
+/* Remove old actions styling since we replaced the footer */
+.article-actions { display: none; }
 
-/* Source color indicator — subtle top border instead of side */
-.article-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 40px;
-  height: 2px;
-  border-radius: 0 0 4px 4px;
-  background: var(--source-color, var(--accent-muted));
-  opacity: 0.5;
-  transition: width var(--transition-normal), opacity var(--transition-normal);
-}
-.article-card:hover::before {
-  width: 60%;
-  opacity: 1;
-}
+/* Remove old source color indicator line */
+.article-card::before { display: none; }
 
 /* Article Content Wrapper */
 .article-content {
