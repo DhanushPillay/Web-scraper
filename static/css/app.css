@@ -280,26 +280,29 @@ a:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 2
   flex-wrap: wrap;
 }
 
-/* Primary action button */
+/* Primary action button (Scrape/Refresh News) */
 .btn-primary {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-5);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1;
-  color: var(--text-inverse);
-  background: var(--text-primary);
+  color: #fff;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
   border: none;
   border-radius: 999px;
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 .btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(255,255,255,0.2);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.6);
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
 }
 .btn-primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .btn-primary:active { transform: translateY(0); }
@@ -692,11 +695,26 @@ body.density-spacious .article-title { font-size: var(--text-lg); }
 .personalized-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .personalized-btn svg { width: 20px; height: 20px; }
 
+/* Articles Container - Masonry Layout */
+.articles-list {
+  column-count: 1;
+  column-gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+@media (min-width: 768px) {
+  .articles-list { column-count: 2; }
+}
+@media (min-width: 1200px) {
+  .articles-list { column-count: 3; }
+}
+
 /* Article Card — Clean, content-driven layout */
 .article-card {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  break-inside: avoid;
+  margin-bottom: var(--space-4);
+  gap: var(--space-3);
   padding: var(--space-5);
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
@@ -715,6 +733,14 @@ body.density-spacious .article-title { font-size: var(--text-lg); }
 .article-card:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+.article-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* Source color indicator — subtle top border instead of side */
