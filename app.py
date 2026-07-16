@@ -910,9 +910,13 @@ def start_scheduler() -> None:
 
 # Initialize scheduler and process metadata on app startup (for both local and production)
 # This runs when app module is imported (e.g., by Gunicorn on PythonAnywhere)
+_is_render = os.getenv('RENDER') is not None  # ponytail: detect Render free tier
 try:
     process_articles_metadata()
-    start_scheduler()
+    if not _is_render:
+        start_scheduler()
+    else:
+        logger.info("Render detected — background scheduler disabled. Use manual Refresh.")
 except Exception as e:
     logger.error(f"Failed to initialize scheduler or process metadata: {e}")
 
