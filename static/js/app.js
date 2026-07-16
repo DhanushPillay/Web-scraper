@@ -310,55 +310,45 @@ function renderArticleCard(article) {
              style="--source-color: ${sourceColor}"
              data-article-id="${article.id}"
              data-source="${article.source}">
-      ${article.thumbnail ? `<img src="${article.thumbnail}" alt="" class="article-thumb" loading="lazy" decoding="async">` : ''}
 
-      <h2 class="article-title">
-        <a href="${article.link}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>
-      </h2>
+      <div class="article-content">
+        <h2 class="article-title">
+          <a href="${article.link}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>
+        </h2>
 
-      ${article.excerpt ? `<p class="article-excerpt">${escapeHtml(article.excerpt)}</p>` : ''}
+        ${article.excerpt ? `<p class="article-excerpt">${escapeHtml(article.excerpt)}</p>` : ''}
 
-      <div class="article-meta">
-        <span class="source-badge">
-          <span style="width: 8px; height: 8px; border-radius: 50%; background: ${sourceColor}; flex-shrink: 0;"></span>
-          ${escapeHtml(article.source)}
-        </span>
+        <div class="article-meta">
+          <span class="source-badge">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${sourceColor}; flex-shrink: 0;"></span>
+            ${escapeHtml(article.source)}
+          </span>
 
-        <span class="meta-item">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
-          </svg>
-          <span class="tabular-nums">${article.score || 0}</span>
-        </span>
+          <span class="meta-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            <span class="tabular-nums">${article.score || 0}</span>
+          </span>
 
-        <span class="meta-item">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-          ${escapeHtml(article.time || 'Recent')}
-        </span>
+          <span class="meta-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span class="tabular-nums">${article.comments || '0'}</span>
+          </span>
 
-        <span class="meta-item">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          <span class="tabular-nums">${article.comments || '0'}</span>
-        </span>
+          ${article.category && article.category !== 'general' && article.category !== 'General'
+            ? `<span class="category-badge">${escapeHtml(article.category)}</span>`
+            : ''}
 
-        ${article.category && article.category !== 'general' && article.category !== 'General'
-          ? `<span class="category-badge">${escapeHtml(article.category)}</span>`
-          : ''}
+          ${article.sentiment && article.sentiment !== 'neutral'
+            ? `<span class="sentiment-badge sentiment-${article.sentiment}">${article.sentiment === 'positive' ? 'Positive' : 'Negative'}</span>`
+            : ''}
 
-        ${article.sentiment && article.sentiment !== 'neutral'
-          ? `<span class="sentiment-badge sentiment-${article.sentiment}">
-              ${article.sentiment === 'positive'
-                ? '<svg viewBox="0 0 24 24" fill="currentColor" style="width:12px;height:12px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-4-12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm8 0c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2z"/></svg> Positive'
-                : '<svg viewBox="0 0 24 24" fill="currentColor" style="width:12px;height:12px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-4-12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm8 0c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2z"/></svg> Negative'}
-            </span>`
-          : ''}
-
-        ${article.read_time
-          ? `<span class="read-time">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              ${article.read_time} min
-            </span>`
-          : ''}
+          ${article.read_time
+            ? `<span class="read-time">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                ${article.read_time} min
+              </span>`
+            : ''}
+        </div>
       </div>
 
       <div class="article-actions">
@@ -366,21 +356,21 @@ function renderArticleCard(article) {
                 onclick="toggleBookmark(${article.id}, this)"
                 aria-label="${article.is_saved ? 'Remove bookmark' : 'Bookmark'}"
                 title="${article.is_saved ? 'Remove bookmark' : 'Bookmark'}">
-          <svg viewBox="0 0 24 24" fill="${article.is_saved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          <svg viewBox="0 0 24 24" fill="${article.is_saved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         </button>
 
         <button class="icon-btn ${article.is_read ? 'read-active' : ''}"
                 onclick="toggleRead(${article.id}, this)"
                 aria-label="${article.is_read ? 'Mark as unread' : 'Mark as read'}"
                 title="${article.is_read ? 'Mark as unread' : 'Mark as read'}">
-          <svg viewBox="0 0 24 24" fill="${article.is_read ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          <svg viewBox="0 0 24 24" fill="${article.is_read ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         </button>
 
         <button class="icon-btn"
                 onclick="summarizeArticle('${escapeHtml(article.link)}')"
                 aria-label="AI Summary"
                 title="AI Summary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         </button>
       </div>
     </article>

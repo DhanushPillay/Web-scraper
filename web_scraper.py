@@ -28,6 +28,11 @@ def _clean_excerpt(text: str) -> str:
     # Decode common HTML entities
     text = text.replace('&', '&').replace('<', '<').replace('>', '>')
     text = text.replace("&#34;", "&#34;").replace("&#39;", "&#39;").replace("&nbsp;", " ")
+    # Strip HN raw URL patterns (Article URL: ..., Comments URL: ..., Points: ..., # Comments: ...)
+    text = re.sub(r'Article URL:\s*https?://\S+', '', text)
+    text = re.sub(r'Comments URL:\s*https?://\S+', '', text)
+    text = re.sub(r'Points:\s*\d+', '', text)
+    text = re.sub(r'#\s*Comments:\s*\d+', '', text)
     # Normalize whitespace
     text = re.sub(r'\s+', ' ', text).strip()
     # Truncate at word boundary
