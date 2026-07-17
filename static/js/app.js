@@ -123,7 +123,25 @@ function initKeyboardSearch() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  $('#scrapeForm')?.addEventListener('submit', () => $('#loadingOverlay')?.classList.add('show'));
+  $('#scrapeForm')?.addEventListener('submit', () => {
+    const overlay = $('#loadingOverlay');
+    const progress = $('#loadingProgress');
+    overlay?.classList.add('show');
+    if (!progress) return;
+    const steps = [
+      [3000, 'Fetching articles from sources…'],
+      [8000, 'Extracting article images…'],
+      [16000, 'Almost ready…'],
+    ];
+    const start = Date.now();
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start;
+      for (const [ms, text] of steps) {
+        if (elapsed >= ms) progress.textContent = text;
+      }
+      if (elapsed >= 20000) clearInterval(id);
+    }, 1000);
+  });
   document.addEventListener('click', (event) => {
     const action = event.target.closest('[data-action]');
     if (action) {

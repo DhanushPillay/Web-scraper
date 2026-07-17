@@ -59,7 +59,7 @@
     <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite" aria-label="Refreshing articles">
         <div class="loading-mark" aria-hidden="true"></div>
         <h2>Refreshing your briefing</h2>
-        <p>Checking the latest stories from your sources.</p>
+        <p id="loadingProgress">Checking the latest stories from your sources.</p>
     </div>
 
     <main class="tp-main" id="main-content">
@@ -186,7 +186,7 @@
             <p class="tp-eyebrow">Nothing here yet</p>
             <h2 id="empty-title">{% if keyword %}No stories match that search{% elif showing_saved %}Your reading list is empty{% else %}Your briefing is ready when you are{% endif %}</h2>
             <p>{% if keyword %}Try a broader term or clear your filters.{% elif showing_saved %}Save any story to find it here later.{% else %}Refresh the feed to pull in the latest stories from your sources.{% endif %}</p>
-            {% if not showing_saved and not keyword %}<form method="POST" action="{{ url_for('index') }}"><input type="hidden" name="refresh" value="true"><button type="submit" class="tp-primary-action">Refresh the feed</button></form>{% endif %}
+            {% if not showing_saved and not keyword %}<form id="scrapeForm" method="POST" action="{{ url_for('index') }}"><input type="hidden" name="refresh" value="true"><button type="submit" class="tp-primary-action">Refresh the feed</button></form>{% endif %}
             {% if keyword %}<a class="tp-clear-filters" href="{{ url_for('index') }}">Clear search</a>{% endif %}
         </section>
         {% endif %}
