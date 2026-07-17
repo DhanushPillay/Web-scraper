@@ -3,310 +3,203 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Sniffer — Real-time news from Hacker News, TechCrunch, Reddit, The Verge, and Ars Technica">
-    <title>Sniffer</title>
+    <meta name="description" content="Tech Pulse — a focused, personal tech-news briefing.">
+    <title>Tech Pulse · Your tech briefing</title>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a0c">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/app.css">
-    <link rel="preconnect" href="https://cdn.jsdelivr.net">
 </head>
 <body>
-    <!-- Navbar -->
-    <nav class="navbar" role="navigation" aria-label="Main navigation" style="border-bottom: 1px solid rgba(255,255,255,0.05); padding: 12px 24px; background: rgba(10, 10, 12, 0.8); backdrop-filter: blur(20px); position: sticky; top: 0; z-index: 100;">
-        <div class="container navbar-inner" style="display: flex; align-items: center; justify-content: space-between; max-width: 1400px; margin: 0 auto;">
-            <!-- Brand -->
-            <a href="/" class="brand" aria-label="Sniffer Home" style="display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 1.25rem; letter-spacing: -0.02em; color: #fff; text-decoration: none;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="url(#blue-purple-grad)" stroke-width="2" aria-hidden="true" style="width: 24px; height: 24px;">
+    <nav class="tp-navbar" aria-label="Primary navigation">
+        <div class="tp-navbar-inner">
+            <a href="{{ url_for('index') }}" class="tp-brand" aria-label="Tech Pulse home">
+                <svg viewBox="0 0 24 24" fill="none" stroke="url(#brandGrad)" stroke-width="2.5" width="26" height="26" aria-hidden="true">
                     <defs>
-                        <linearGradient id="blue-purple-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#3b82f6" />
-                            <stop offset="100%" stop-color="#8b5cf6" />
+                        <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#60a5fa"/>
+                            <stop offset="100%" stop-color="#a78bfa"/>
                         </linearGradient>
                     </defs>
                     <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
                 </svg>
-                TECH PULSE
+                <span>TECH PULSE</span>
             </a>
 
-            <!-- Search Bar in Navbar -->
-            <form method="POST" action="/" id="navSearchForm" style="flex: 1; max-width: 450px; margin: 0 32px; position: relative;">
-                <svg class="search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; color: #a1a1aa;">
-                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
-                <input type="search" name="keyword" class="search-input" placeholder="Search latest tech news..." value="{{ keyword|default('') }}" autocomplete="off" style="width: 100%; padding: 10px 16px 10px 42px; border-radius: 12px; background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.05); color: #fff; outline: none; font-size: 0.9rem; transition: background 0.2s, border-color 0.2s;">
+            <div class="tp-nav-links" aria-label="Feed views">
+                <a href="{{ url_for('index') }}" class="tp-nav-link {% if not showing_saved %}is-active{% endif %}">Feed</a>
+                <a href="{{ url_for('saved_articles') }}" class="tp-nav-link {% if showing_saved %}is-active{% endif %}">Saved <span>{{ stats.saved if stats else 0 }}</span></a>
+            </div>
+
+            <form method="GET" action="{{ url_for('index') }}" class="tp-search-form" role="search">
+                <label class="sr-only" for="searchInput">Search articles</label>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tp-search-icon" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input id="searchInput" type="search" name="keyword" placeholder="Search the briefing" value="{{ keyword|default('') }}" autocomplete="off" class="tp-search-input">
+                <input type="hidden" name="source" value="{{ source_filter|default('all') }}">
+                <input type="hidden" name="category" value="{{ category_filter|default('all') }}">
+                <input type="hidden" name="sort" value="{{ sort_by|default('score') }}">
             </form>
 
-            <div class="nav-actions" style="display: flex; align-items: center; gap: 24px;">
-                <!-- Stats in Navbar -->
-                <div class="nav-stats" style="font-size: 0.85rem; color: #a1a1aa; display: flex; gap: 16px;">
-                    <span>Activity: <strong style="color:#fff">{{ stats.today if stats else 0 }}</strong></span>
-                    <span>Upvotes: <strong style="color:#fff">{{ stats.total if stats else 0 }}</strong></span>
-                    <span>Comments: <strong style="color:#fff">{{ stats.saved if stats else 0 }}</strong></span>
-                </div>
-
-                <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.1);"></div>
-
-                <!-- Primary Scrape Button -->
-                <form id="scrapeForm" method="POST" action="/" style="display: inline;">
-                    <button type="submit" name="refresh" value="true" class="icon-btn" style="background: transparent; border: none; color: #a1a1aa; cursor: pointer; padding: 4px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: color 0.2s;" title="Scrape News" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#a1a1aa'">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 20px; height: 20px;">
-                            <polyline points="23 4 23 10 17 10"></polyline>
-                            <polyline points="1 20 1 14 7 14"></polyline>
-                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                        </svg>
-                    </button>
+            <div class="tp-nav-right">
+                <span class="tp-live-status" title="Articles saved in your local feed"><i></i><span class="tp-live-label">{{ stats.today if stats else 0 }} new today</span></span>
+                <form id="scrapeForm" method="POST" action="{{ url_for('index') }}">
+                    <input type="hidden" name="refresh" value="true">
                     <input type="hidden" name="pages" value="2">
+                    <button type="submit" class="tp-refresh-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                        <span>Refresh</span>
+                    </button>
                 </form>
-
-                <!-- Profile -->
-                <div class="nav-profile" style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 8px; border-radius: 20px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
-                    <img src="https://ui-avatars.com/api/?name=Sarah+J&background=random" alt="Avatar" style="width: 28px; height: 28px; border-radius: 50%;">
-                    <span style="font-size: 0.85rem; color: #e4e4e7; font-weight: 500;">Sarah J.</span>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; color: #a1a1aa;">
-                        <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                </div>
             </div>
         </div>
     </nav>
 
-    <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay" role="alert" aria-live="polite" style="display:none;">
-        <div class="skeleton-title" style="width: 120px; height: 120px; border-radius: 50%; margin-bottom: var(--space-4);"></div>
-        <h3 style="margin: 0 0 var(--space-2);">Loading articles…</h3>
-        <p style="color: var(--text-muted); margin: 0;">Fetching latest tech news</p>
+    <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite" aria-label="Refreshing articles">
+        <div class="loading-mark" aria-hidden="true"></div>
+        <h2>Refreshing your briefing</h2>
+        <p>Checking the latest stories from your sources.</p>
     </div>
 
-    <main class="container" id="main-content" style="max-width: 1400px; margin: 0 auto; padding: 32px 24px;">
+    <main class="tp-main" id="main-content">
+        <section class="tp-briefing" aria-labelledby="briefing-title">
+            <div>
+                <p class="tp-eyebrow">{{ 'Reading list' if showing_saved else 'Your tech briefing' }}</p>
+                <h1 id="briefing-title">
+                    {% if showing_saved %}Saved articles{% elif keyword %}Results for “{{ keyword }}”{% else %}What’s worth your attention{% endif %}
+                </h1>
+                <p class="tp-briefing-copy">
+                    {% if showing_saved %}A quiet place for the stories you want to return to.{% elif total_count %}{{ total_count }} stories, ranked for signal over noise.{% else %}Choose Refresh to collect your first set of stories.{% endif %}
+                </p>
+            </div>
+            <div class="tp-briefing-stats" aria-label="Feed statistics">
+                <div><strong>{{ stats.total if stats else 0 }}</strong><span>in feed</span></div>
+                <div><strong>{{ stats.read if stats else 0 }}</strong><span>read</span></div>
+                <div><strong>{{ stats.saved if stats else 0 }}</strong><span>saved</span></div>
+            </div>
+        </section>
 
-        <!-- Articles List -->
+        {% if not showing_saved %}
+        <form class="tp-filter-bar" method="GET" action="{{ url_for('index') }}" aria-label="Filter articles">
+            <input type="hidden" name="keyword" value="{{ keyword|default('') }}">
+            <label>
+                <span>Source</span>
+                <select name="source" onchange="this.form.submit()">
+                    <option value="all" {% if source_filter == 'all' %}selected{% endif %}>All sources</option>
+                    <option value="Hacker News" {% if source_filter == 'Hacker News' %}selected{% endif %}>Hacker News</option>
+                    <option value="TechCrunch" {% if source_filter == 'TechCrunch' %}selected{% endif %}>TechCrunch</option>
+                    <option value="Reddit" {% if source_filter == 'Reddit' %}selected{% endif %}>Reddit</option>
+                    <option value="The Verge" {% if source_filter == 'The Verge' %}selected{% endif %}>The Verge</option>
+                    <option value="Ars Technica" {% if source_filter == 'Ars Technica' %}selected{% endif %}>Ars Technica</option>
+                </select>
+            </label>
+            <label>
+                <span>Topic</span>
+                <select name="category" onchange="this.form.submit()">
+                    <option value="all" {% if category_filter == 'all' %}selected{% endif %}>Every topic</option>
+                    <option value="AI & ML" {% if category_filter == 'AI & ML' %}selected{% endif %}>AI &amp; ML</option>
+                    <option value="Security" {% if category_filter == 'Security' %}selected{% endif %}>Security</option>
+                    <option value="Hardware" {% if category_filter == 'Hardware' %}selected{% endif %}>Hardware</option>
+                    <option value="Software" {% if category_filter == 'Software' %}selected{% endif %}>Software</option>
+                    <option value="Business" {% if category_filter == 'Business' %}selected{% endif %}>Business</option>
+                    <option value="Science" {% if category_filter == 'Science' %}selected{% endif %}>Science</option>
+                    <option value="Gaming" {% if category_filter == 'Gaming' %}selected{% endif %}>Gaming</option>
+                </select>
+            </label>
+            <label>
+                <span>Order</span>
+                <select name="sort" onchange="this.form.submit()">
+                    <option value="score" {% if sort_by == 'score' %}selected{% endif %}>Top rated</option>
+                    <option value="newest" {% if sort_by == 'newest' %}selected{% endif %}>Newest first</option>
+                    <option value="comments" {% if sort_by == 'comments' %}selected{% endif %}>Most discussed</option>
+                </select>
+            </label>
+            {% if keyword or source_filter != 'all' or category_filter != 'all' or sort_by != 'score' %}
+            <a class="tp-clear-filters" href="{{ url_for('index') }}">Clear filters</a>
+            {% endif %}
+        </form>
+        {% endif %}
+
         {% if articles %}
-        <div class="articles-list masonry-grid">
+        <div class="tp-grid">
             {% for article in articles %}
-            <article class="article-card"
+            <article class="tp-card {% if loop.first and not showing_saved %}tp-card--featured{% endif %} {% if article.is_read %}is-read{% endif %}"
                      id="article-{{ article.id }}"
-                     style="--source-color: {{ article.source_color|default('#52525b') }}"
+                     style="--src: {% if article.source == 'Hacker News' %}#ff6600{% elif article.source == 'TechCrunch' %}#0cbc87{% elif article.source == 'Reddit' %}#ff4500{% elif article.source == 'The Verge' %}#e01e5a{% elif article.source == 'Ars Technica' %}#00b4d8{% else %}#52525b{% endif %}"
                      data-article-id="{{ article.id }}">
-
-                <!-- Image Placeholder to match Mockup -->
-                <div class="card-image-placeholder" style="height: 140px; background: linear-gradient(135deg, var(--source-color) 0%, rgba(10,10,12,0) 100%); border-radius: 12px 12px 0 0; position: relative; overflow: hidden; opacity: 0.8;">
-                    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMCIgaGVpZ2h0PSIyMCI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNykiLz48L3N2Zz4=');"></div>
+                <div class="tp-card-image" aria-hidden="true">
+                    <div class="tp-card-image-pattern"></div>
+                    <span class="tp-source-pill">{{ article.source }}</span>
+                    <span class="tp-time-badge">{{ article.time|default('Recently') }}</span>
                 </div>
-
-                <div class="article-content" style="padding: 20px; display: flex; flex-direction: column; flex: 1;">
-                    <div class="card-meta-top" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                        <span class="source-badge-pill" style="background: var(--source-color); color: #fff; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;">
-                            {{ article.source }}
-                        </span>
-                        <span class="time-ago" style="font-size: 0.75rem; color: #a1a1aa;">
-                            {{ article.time|default('45m ago') }}
-                        </span>
+                <div class="tp-card-body">
+                    <div class="tp-card-tags">
+                        {% if article.category and article.category|lower != 'general' %}<span>{{ article.category }}</span>{% endif %}
+                        {% if article.read_time %}<span>{{ article.read_time }} min read</span>{% endif %}
                     </div>
-
-                    <h2 class="article-title" style="font-size: 1.15rem; font-weight: 600; margin: 0 0 10px 0; line-height: 1.35; color: #fff;">
-                        <a href="{{ article.link }}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: none;">{{ article.title }}</a>
-                    </h2>
-
-                    {% if article.excerpt %}
-                    <p class="article-excerpt" style="font-size: 0.9rem; color: #a1a1aa; line-height: 1.5; margin: 0 0 16px 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">
-                        {{ article.excerpt }}
-                    </p>
-                    {% endif %}
-
-                    <div class="card-footer-meta" style="margin-top: auto; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 16px;">
-                        <div class="card-author" style="display: flex; align-items: center; gap: 8px;">
-                            <img src="https://ui-avatars.com/api/?name={{ article.author|urlencode if article.author else 'Author' }}&background=random" alt="Author" style="width: 20px; height: 20px; border-radius: 50%;">
-                            <div class="author-info" style="display: flex; flex-direction: column;">
-                                <span class="author-name" style="font-size: 0.75rem; color: #e4e4e7; font-weight: 500;">{{ article.author|default('Author Info') }}</span>
-                                <span class="author-handle" style="font-size: 0.65rem; color: #71717a;">Sarah J. dev</span>
-                            </div>
+                    <h2 class="tp-card-title"><a href="{{ article.link }}" target="_blank" rel="noopener noreferrer">{{ article.title }}</a></h2>
+                    {% if article.excerpt %}<p class="tp-card-excerpt">{{ article.excerpt }}</p>{% endif %}
+                    <div class="tp-card-footer">
+                        <div class="tp-card-author">
+                            <img src="https://ui-avatars.com/api/?name={{ article.source|urlencode }}&background=111827&color=fff&size=24" alt="" class="tp-author-avatar">
+                            <span class="tp-author-name">{{ article.author|default(article.source) }}</span>
                         </div>
-                        <div class="card-stats" style="display: flex; gap: 12px; color: #a1a1aa; font-size: 0.75rem; font-weight: 500;">
-                            <span class="stat-upvotes" style="display: flex; align-items: center; gap: 4px;">
-                                <svg viewBox="0 0 24 24" fill="currentColor" style="width: 12px; height: 12px;"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
-                                {{ article.score|default(0) }}
-                            </span>
-                            <span class="stat-comments" style="display: flex; align-items: center; gap: 4px;">
-                                <svg viewBox="0 0 24 24" fill="currentColor" style="width: 12px; height: 12px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                                {{ article.comments|default(0) }}
-                            </span>
+                        <div class="tp-card-stats" aria-label="Article engagement">
+                            <span class="tp-stat" title="Score"><svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>{{ article.score|default(0) }}</span>
+                            <span class="tp-stat" title="Comments"><svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{{ article.comments|default(0) }}</span>
                         </div>
+                    </div>
+                    <div class="tp-card-actions" aria-label="Article actions">
+                        <button type="button" class="tp-article-action {% if article.is_saved %}is-active{% endif %}" data-action="bookmark" aria-pressed="{{ 'true' if article.is_saved else 'false' }}" title="{{ 'Remove from saved' if article.is_saved else 'Save article' }}">
+                            <svg viewBox="0 0 24 24" fill="{{ 'currentColor' if article.is_saved else 'none' }}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="sr-only">Save article</span>
+                        </button>
+                        <button type="button" class="tp-article-action {% if article.is_read %}is-active{% endif %}" data-action="read" aria-pressed="{{ 'true' if article.is_read else 'false' }}" title="{{ 'Mark unread' if article.is_read else 'Mark read' }}">
+                            <svg viewBox="0 0 24 24" fill="{{ 'currentColor' if article.is_read else 'none' }}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span class="sr-only">Mark as read</span>
+                        </button>
+                        <button type="button" class="tp-article-action" data-action="summary" data-url="{{ article.link }}" title="Summarize article">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m12 3-1.9 5.1L5 10l5.1 1.9L12 17l1.9-5.1L19 10l-5.1-1.9L12 3Z"/><path d="m19 15-.8 2.2L16 18l2.2.8L19 21l.8-2.2L22 18l-2.2-.8L19 15Z"/></svg><span class="sr-only">Summarize article</span>
+                        </button>
                     </div>
                 </div>
             </article>
             {% endfor %}
         </div>
 
-        <!-- Load More -->
         {% if total_pages|default(1) > page|default(1) %}
-        <div class="pagination">
-            <button type="button" class="load-more-btn" id="loadMoreBtn"
-                    data-next-page="{{ page|default(1) + 1 }}"
-                    data-sort="{{ sort_by|default('score') }}"
-                    data-source="{{ source_filter|default('all') }}"
-                    data-keyword="{{ keyword|default('') }}"
-                    data-category="{{ category_filter|default('all') }}"
-                    data-saved-only="{{ '1' if saved_only else '' }}">
-                <span class="btn-text">Load more</span>
-                <span class="spinner" style="display: none;"></span>
-            </button>
+        <div class="tp-load-more">
+            {% if showing_saved %}
+            <a class="tp-load-btn" href="{{ url_for('saved_articles', page=page + 1, sort=sort_by) }}">Next saved articles <span aria-hidden="true">→</span></a>
+            {% else %}
+            <a class="tp-load-btn" href="{{ url_for('index', page=page + 1, sort=sort_by, source=source_filter, keyword=keyword, category=category_filter) }}">Show more stories <span aria-hidden="true">→</span></a>
+            {% endif %}
         </div>
         {% endif %}
-
         {% else %}
-        <!-- Empty State -->
-        <div class="empty-state">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="16" y1="13" x2="8" y2="13"/>
-                <line x1="16" y1="17" x2="8" y2="17"/>
-                <polyline points="10 9 9 9 8 9"/>
-            </svg>
-            <h3>No articles yet</h3>
-            <p>Click <strong>Refresh</strong> to fetch the latest tech news from all sources.</p>
-        </div>
+        <section class="tp-empty" aria-labelledby="empty-title">
+            <div class="tp-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg></div>
+            <p class="tp-eyebrow">Nothing here yet</p>
+            <h2 id="empty-title">{% if keyword %}No stories match that search{% elif showing_saved %}Your reading list is empty{% else %}Your briefing is ready when you are{% endif %}</h2>
+            <p>{% if keyword %}Try a broader term or clear your filters.{% elif showing_saved %}Save any story to find it here later.{% else %}Refresh the feed to pull in the latest stories from your sources.{% endif %}</p>
+            {% if not showing_saved and not keyword %}<form method="POST" action="{{ url_for('index') }}"><input type="hidden" name="refresh" value="true"><button type="submit" class="tp-primary-action">Refresh the feed</button></form>{% endif %}
+            {% if keyword %}<a class="tp-clear-filters" href="{{ url_for('index') }}">Clear search</a>{% endif %}
+        </section>
         {% endif %}
     </main>
 
-    <!-- Footer -->
-    <footer class="footer" role="contentinfo">
-        <div class="container footer-inner">
-            <div class="footer-subscribe">
-                <h4>Daily Digest</h4>
-                <form class="subscribe-form" id="subscribeForm">
-                    <label for="subscribeEmail" style="position: absolute; width: 1px; height: 1px; overflow: hidden;">Email address</label>
-                    <input type="email" id="subscribeEmail" name="email" placeholder="your@email.com" autocomplete="email" required>
-                    <button type="submit">Subscribe</button>
-                </form>
-                <div id="subscribeMessage" aria-live="polite"></div>
-            </div>
-            <p class="footer-copyright">
-                Sniffer — Built with Flask, SQLite & ❤️<br>
-                Data from HN, TechCrunch, Reddit, The Verge, Ars Technica
-            </p>
-        </div>
-    </footer>
-
-    <!-- Summary Modal -->
-    <div class="modal-overlay" id="summaryModal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle">
-        <div class="modal">
+    <div class="modal-overlay" id="summaryModal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle" aria-hidden="true">
+        <div class="modal" role="document">
             <header class="modal-header">
-                <h3 id="summaryTitle">Article Summary</h3>
-                <button class="modal-close" onclick="closeSummaryModal()" aria-label="Close summary">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                </button>
+                <div><p class="tp-eyebrow">Quick read</p><h2 id="summaryTitle">Article summary</h2></div>
+                <button type="button" class="modal-close" data-modal-close aria-label="Close summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </header>
-            <div class="modal-body" id="summaryBody">
-                <div style="text-align: center; padding: var(--space-6);">
-                    <div class="skeleton-title" style="width: 60px; height: 60px; border-radius: 50%; margin: 0 auto var(--space-4);"></div>
-                    <p style="color: var(--text-secondary); margin: 0;">Generating AI summary…</p>
-                </div>
-            </div>
-            <footer class="modal-footer">
-                <a href="#" id="summaryReadLink" target="_blank" rel="noopener" class="btn-secondary" style="display: none;">
-                    Read Full Article →
-                </a>
-            </footer>
+            <div class="modal-body" id="summaryBody"></div>
+            <footer class="modal-footer"><a href="#" id="summaryReadLink" target="_blank" rel="noopener" class="btn-secondary" hidden>Read the full article <span aria-hidden="true">→</span></a></footer>
         </div>
     </div>
 
-    <!-- Command Palette -->
-    <div class="command-palette-overlay" id="commandPalette" role="dialog" aria-modal="true" aria-label="Command palette">
-        <div class="command-palette">
-            <div class="command-palette-input-wrapper">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="width:20px;height:20px;color:var(--text-muted)">
-                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
-                <input type="text" id="commandInput" class="command-palette-input" placeholder="Type a command or search…"
-                       autocomplete="off" aria-label="Search commands">
-                <kbd class="command-palette-esc">Esc</kbd>
-            </div>
-            <div class="command-palette-list" id="commandList" role="listbox">
-                <div class="command-group">
-                    <div class="command-group-label">Navigation</div>
-                    <button class="command-item" role="option" data-action="go-feed">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
-                        <span>Go to Feed</span>
-                        <kbd>G F</kbd>
-                    </button>
-                    <button class="command-item" role="option" data-action="go-saved">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-                        <span>Go to Saved</span>
-                        <kbd>G S</kbd>
-                    </button>
-                </div>
-                <div class="command-group">
-                    <div class="command-group-label">Actions</div>
-                    <button class="command-item" role="option" data-action="refresh">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/><polyline points="23 7 17 7 17 13"/></svg>
-                        <span>Refresh Feed</span>
-                        <kbd>R</kbd>
-                    </button>
-                    <button class="command-item" role="option" data-action="search">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                        <span>Focus Search</span>
-                        <kbd>/</kbd>
-                    </button>
-                    <button class="command-item" role="option" data-action="toggle-theme">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-                        <span>Toggle Theme</span>
-                        <kbd>T</kbd>
-                    </button>
-                </div>
-                <div class="command-group">
-                    <div class="command-group-label">Export</div>
-                    <button class="command-item" role="option" data-action="export-csv">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        <span>Export CSV</span>
-                        <kbd>E C</kbd>
-                    </button>
-                    <button class="command-item" role="option" data-action="export-json">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                        <span>Export Bookmarks (JSON)</span>
-                        <kbd>E J</kbd>
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Keyboard Shortcuts Help -->
-    <div class="shortcuts-help" id="shortcutsHelp" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
-        <div class="shortcuts-panel">
-            <h3 id="shortcutsTitle">Keyboard Shortcuts</h3>
-            <div class="shortcuts-list">
-                <kbd>J</kbd><span>Next article</span>
-                <kbd>K</kbd><span>Previous article</span>
-                <kbd>O</kbd><span>Open article</span>
-                <kbd>B</kbd><span>Toggle bookmark</span>
-                <kbd>R</kbd><span>Toggle read</span>
-                <kbd>/</kbd><span>Focus search</span>
-                <kbd>F</kbd><span>Toggle focus mode</span>
-                <kbd>T</kbd><span>Toggle theme</span>
-                <kbd>⌘K</kbd><span>Command palette</span>
-                <kbd>?</kbd><span>Show this help</span>
-                <kbd>Esc</kbd><span>Close modal / help</span>
-            </div>
-            <button class="btn-secondary shortcuts-close" onclick="closeShortcutsHelp()">Got it</button>
-        </div>
-    </div>
-
-    <!-- Toast Container -->
     <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
-
-    <!-- Scroll to Top -->
-    <button class="scroll-top" id="scrollTop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Scroll to top">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <line x1="12" y1="19" x2="12" y2="5"/>
-            <polyline points="5 12 12 5 19 12"/>
-        </svg>
-    </button>
-
-    <!-- Scripts -->
+    <button class="scroll-top" id="scrollTop" type="button" aria-label="Scroll to top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
     <script src="/static/js/app.js"></script>
 </body>
 </html>
