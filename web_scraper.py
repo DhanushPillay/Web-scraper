@@ -14,10 +14,29 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from newspaper import Article as NewspaperArticle
 
 logger = logging.getLogger(__name__)
 
 EXCERPT_MAX_LEN = 280
+
+
+def _extract_feed_image(entry) -> str:
+    """Return the best image URL exposed by an RSS or Atom entry."""
+    for field in ('media_content', 'media_thumbnail', 'enclosures'):
+        for item in getattr(entry, field, []) or []:
+            url = item.get('url') or item.get('href')
+            if url and str(url).startswith(('https://', 'http://')):
+                return str(url)
+
+    for field in ('summary', 'description', 'content'):
+        value = getattr(entry, field, '') or ''
+        if isinstance(value, list):
+            value = ' '.join(str(part.get('value', '')) for part in value)
+        match = re.search(r'<img[^>]+src=[\"\']([^\"\']+)', str(value), re.IGNORECASE)
+        if match and match.group(1).startswith(('https://', 'http://')):
+            return match.group(1)
+    return ''
 
 def _clean_excerpt(text: str) -> str:
     """Strip HTML tags, normalize whitespace, truncate to EXCERPT_MAX_LEN."""
@@ -39,6 +58,17 @@ def _clean_excerpt(text: str) -> str:
     if len(text) > EXCERPT_MAX_LEN:
         text = text[:EXCERPT_MAX_LEN].rsplit(' ', 1)[0] + '…'
     return text
+
+
+def _fetch_article_image(url: str, timeout: int = 5) -> str:
+    """Fetch the top image from an article page via newspaper3k. Returns '' on failure."""
+    try:
+        art = NewspaperArticle(url)
+        art.download()
+        art.parse()
+        return art.top_image or ''
+    except Exception:
+        return ''
 
 
 class BaseScraper(ABC):
@@ -135,7 +165,8 @@ class HackerNewsScraper(BaseScraper):
                         'time': time_posted,
                         'comments': str(comments),
                         'source': 'Hacker News',
-                        'excerpt': excerpt
+                        'excerpt': excerpt,
+                        'image_url': _extract_feed_image(entry)
                     })
                 self.last_status = "ok"
             else:
@@ -221,8 +252,9 @@ class HackerNewsScraper(BaseScraper):
                     'author': author,
                     'time': time_posted,
                     'comments': comments,
-                    'source': 'Hacker News',
-                    'excerpt': excerpt
+                        'source': 'Hacker News',
+                        'excerpt': excerpt,
+                        'image_url': ''
                 })
             except (AttributeError, ValueError):
                 continue
@@ -266,7 +298,8 @@ class TechCrunchScraper(BaseScraper):
                     'time': time_posted,
                     'comments': '0',
                     'source': 'TechCrunch',
-                    'excerpt': excerpt
+                    'excerpt': excerpt,
+                    'image_url': _extract_feed_image(entry)
                 })
             self.last_status = "ok"
         except Exception as e:
@@ -312,7 +345,12 @@ class RedditScraper(BaseScraper):
                         'time': 'Today',
                         'comments': str(p_data.get('num_comments', 0)),
                         'source': 'Reddit',
-                        'excerpt': excerpt
+                        'excerpt': excerpt,
+                        'image_url': (
+                            p_data.get('thumbnail')
+                            if str(p_data.get('thumbnail', '')).startswith(('https://', 'http://'))
+                            else p_data.get('preview', {}).get('images', [{}])[0].get('source', {}).get('url', '')
+                        )
                     })
             self.last_status = "ok"
         except requests.RequestException as e:
@@ -363,7 +401,8 @@ class TheVergeScraper(BaseScraper):
                     'time': time_posted,
                     'comments': '0',
                     'source': 'The Verge',
-                    'excerpt': excerpt
+                    'excerpt': excerpt,
+                    'image_url': _extract_feed_image(entry)
                 })
             self.last_status = "ok"
         except Exception as e:
@@ -414,7 +453,8 @@ class ArsTechnicaScraper(BaseScraper):
                     'time': time_posted,
                     'comments': '0',
                     'source': 'Ars Technica',
-                    'excerpt': excerpt
+                    'excerpt': excerpt,
+                    'image_url': _extract_feed_image(entry)
                 })
             self.last_status = "ok"
         except Exception as e:
@@ -467,8 +507,26 @@ class NewsAggregator:
                 except Exception as e:
                     logger.error(f"Scraper thread failed: {e}")
 
+        self._enrich_images()
         self._last_scrape_time = time.time()
         logger.info(f"Total articles scraped: {len(self.articles)}")
+
+    def _enrich_images(self) -> None:
+        """Fetch real images for articles missing image_url (concurrent)."""
+        missing = [a for a in self.articles if not a.get('image_url')]
+        if not missing:
+            return
+        logger.info(f"Enriching images for {len(missing)} articles...")
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(_fetch_article_image, a['link']): a for a in missing}
+            for future in as_completed(futures):
+                article = futures[future]
+                try:
+                    img = future.result()
+                    if img:
+                        article['image_url'] = img
+                except Exception:
+                    pass
 
     def get_articles(self) -> list[dict]:
         return self.articles

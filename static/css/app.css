@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Tech Pulse — Complete UI System
+   Sniffer — Complete UI System
    Matching Concept 1 Mockup: Masonry grid, glassmorphism, neon glows
    ========================================================================== */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -285,6 +285,7 @@ button { font-family: inherit; cursor: pointer; }
   position: relative;
   height: 140px;
   overflow: hidden;
+  background: #11121a;
 }
 
 .tp-card--featured .tp-card-image {
@@ -299,6 +300,18 @@ button { font-family: inherit; cursor: pointer; }
     radial-gradient(circle at 20% 80%, rgba(255,255,255,0.04) 0%, transparent 50%),
     radial-gradient(circle at 80% 20%, rgba(255,255,255,0.03) 0%, transparent 40%);
   mix-blend-mode: overlay;
+}
+
+.tp-card-photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.45s var(--ease);
+}
+
+.tp-card:hover .tp-card-photo {
+  transform: scale(1.045);
 }
 
 .tp-source-pill {
@@ -977,7 +990,7 @@ button:disabled {
 }
 
 .tp-card-image {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--src) 78%, #0d0d15), #0d0d15 82%);
+  background: #11121a;
 }
 
 .tp-card-image::after {

@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Tech Pulse — a focused, personal tech-news briefing.">
-    <title>Tech Pulse · Your tech briefing</title>
+    <meta name="description" content="Sniffer — a focused, personal tech-news briefing.">
+    <title>Sniffer · Your tech briefing</title>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0a0a0c">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,7 +15,7 @@
 <body>
     <nav class="tp-navbar" aria-label="Primary navigation">
         <div class="tp-navbar-inner">
-            <a href="{{ url_for('index') }}" class="tp-brand" aria-label="Tech Pulse home">
+            <a href="{{ url_for('index') }}" class="tp-brand" aria-label="Sniffer home">
                 <svg viewBox="0 0 24 24" fill="none" stroke="url(#brandGrad)" stroke-width="2.5" width="26" height="26" aria-hidden="true">
                     <defs>
                         <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -25,7 +25,7 @@
                     </defs>
                     <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
                 </svg>
-                <span>TECH PULSE</span>
+                <span>SNIFFER</span>
             </a>
 
             <div class="tp-nav-links" aria-label="Feed views">
@@ -128,8 +128,13 @@
                      id="article-{{ article.id }}"
                      style="--src: {% if article.source == 'Hacker News' %}#ff6600{% elif article.source == 'TechCrunch' %}#0cbc87{% elif article.source == 'Reddit' %}#ff4500{% elif article.source == 'The Verge' %}#e01e5a{% elif article.source == 'Ars Technica' %}#00b4d8{% else %}#52525b{% endif %}"
                      data-article-id="{{ article.id }}">
-                <div class="tp-card-image" aria-hidden="true">
-                    <div class="tp-card-image-pattern"></div>
+                <div class="tp-card-image">
+                    <img class="tp-card-photo"
+                         src="{{ article.image_url or article_fallback_image(article.source) }}"
+                         alt=""
+                         loading="lazy"
+                         referrerpolicy="no-referrer">
+                    <div class="tp-card-image-pattern" aria-hidden="true"></div>
                     <span class="tp-source-pill">{{ article.source }}</span>
                     <span class="tp-time-badge">{{ article.time|default('Recently') }}</span>
                 </div>

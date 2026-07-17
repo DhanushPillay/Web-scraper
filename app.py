@@ -72,6 +72,20 @@ for resource in ['tokenizers/punkt', 'tokenizers/punkt_tab',
 
 app = Flask(__name__)
 
+
+@app.context_processor
+def inject_article_image_helpers():
+    """Provide a reliable photo for articles whose feed has no thumbnail."""
+    fallback_images = {
+        'Hacker News': 'https://images.unsplash.com/photo-1516116216624-53e697fedbea?auto=format&fit=crop&w=1000&q=80',
+        'TechCrunch': 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1000&q=80',
+        'Reddit': 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1000&q=80',
+        'The Verge': 'https://images.unsplash.com/photo-1516321165247-4aa89a48be83?auto=format&fit=crop&w=1000&q=80',
+        'Ars Technica': 'https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1000&q=80',
+    }
+    default_image = 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80'
+    return {'article_fallback_image': lambda source: fallback_images.get(source, default_image)}
+
 # ──────────────────────────────────────────────
 # Security Hardening
 # ──────────────────────────────────────────────
@@ -485,6 +499,7 @@ def background_scrape():
         new_articles = aggregator.get_articles()
         if new_articles:
             db.add_articles(new_articles)
+            db.upsert_images(new_articles)
             logger.info(f"[Scheduler] Added {len(new_articles)} articles")
             # Process metadata for new articles
             process_articles_metadata()
@@ -575,6 +590,7 @@ def index():
                 aggregator.scrape_all(hn_pages=pages, force=force_refresh)
                 new_articles = aggregator.get_articles()
                 db.add_articles(new_articles)
+                db.upsert_images(new_articles)
                 # Process metadata for new articles
                 process_articles_metadata()
             else:

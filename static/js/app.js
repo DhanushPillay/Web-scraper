@@ -1,4 +1,4 @@
-/** Tech Pulse — small, accessible feed interactions. */
+/** Sniffer — small, accessible feed interactions. */
 
 const $ = (selector, context = document) => context.querySelector(selector);
 const $$ = (selector, context = document) => [...context.querySelectorAll(selector)];

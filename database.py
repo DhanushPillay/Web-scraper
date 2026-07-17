@@ -66,6 +66,7 @@ class Database:
                 ("read_time", "INTEGER DEFAULT 0"),
                 ("metadata_processed_at", "REAL"),
                 ("excerpt", "TEXT DEFAULT ''"),
+                ("image_url", "TEXT DEFAULT ''"),
             ]
             for col_name, col_type in migrations:
                 try:
@@ -126,15 +127,16 @@ class Database:
                     INSERT OR IGNORE INTO articles
                     (title, link, score, author, time_posted, comments, source, created_at,
                      is_saved, is_read, sentiment, sentiment_score, category, read_time,
-                     metadata_processed_at, excerpt)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'neutral', 0.0, 'general', 0, NULL, ?)
+                     metadata_processed_at, excerpt, image_url)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 'neutral', 0.0, 'general', 0, NULL, ?, ?)
                 ''', [
                     (
                         a.get('title'), a.get('link'), a.get('score', 0),
                         a.get('author', 'Unknown'), a.get('time', 'Unknown'),
                         a.get('comments', '0'), a.get('source', 'Unknown'),
                         time.time(),
-                        a.get('excerpt', '')
+                        a.get('excerpt', ''),
+                        a.get('image_url', '')
                     )
                     for a in articles
                 ])
@@ -144,6 +146,19 @@ class Database:
                 logger.warning(f"Integrity error during batch insert: {e}")
             except sqlite3.OperationalError as e:
                 logger.error(f"DB operational error during batch insert: {e}")
+
+    def upsert_images(self, articles: List[Dict[str, Any]]) -> None:
+        """Update image_url for articles that have it but the DB row doesn't."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            updates = [(a['image_url'], a['link']) for a in articles if a.get('image_url')]
+            if updates:
+                cursor.executemany(
+                    "UPDATE articles SET image_url = ? WHERE link = ? AND image_url = ''",
+                    updates
+                )
+                conn.commit()
+                logger.info(f"Enriched {cursor.rowcount} article images in DB.")
 
     # ──────────────────────────────────────────────
     # Query Operations (with pagination)
