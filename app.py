@@ -10,6 +10,7 @@ import io
 import csv
 import json
 import logging
+import traceback
 import smtplib
 import atexit
 import socket
@@ -95,8 +96,11 @@ def inject_article_image_helpers():
 # ──────────────────────────────────────────────
 
 # Trusted hosts (Flask 3.1+) — prevent Host header attacks
-trusted_hosts = os.getenv('TRUSTED_HOSTS', '').split(',') if os.getenv('TRUSTED_HOSTS') else ['localhost', '127.0.0.1']
-app.config['TRUSTED_HOSTS'] = [h.strip() for h in trusted_hosts if h.strip()]
+if os.getenv('RENDER'):
+    app.config['TRUSTED_HOSTS'] = []  # ponytail: skip on Render (proxy complicates host matching)
+else:
+    trusted_hosts = os.getenv('TRUSTED_HOSTS', '').split(',') if os.getenv('TRUSTED_HOSTS') else ['localhost', '127.0.0.1']
+    app.config['TRUSTED_HOSTS'] = [h.strip() for h in trusted_hosts if h.strip()]
 
 # Request size limits (DoS mitigation)
 app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
@@ -114,7 +118,6 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,           # HTTPS only
     SESSION_COOKIE_HTTPONLY=True,         # No JS access
     SESSION_COOKIE_SAMESITE='Lax',        # CSRF mitigation
-    SESSION_COOKIE_PARTITIONED=True,      # CHIPS (Flask 3.1+)
 )
 
 # Security headers via Talisman
@@ -1003,7 +1006,7 @@ def handle_payload_too_large(e):
 
 @app.errorhandler(500)
 def handle_server_error(e):
-    logger.error(f"Internal server error: {e}")
+    logger.error(f"Internal server error: {e}\n{traceback.format_exc()}")
     return jsonify({'error': 'internal_error', 'message': 'Something went wrong'}), 500
 
 
