@@ -2,10 +2,12 @@ services:
   - type: web
     name: sniffer
     runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
+    buildCommand: pip install -r requirements.txt && python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('vader_lexicon', quiet=True); nltk.download('stopwords', quiet=True); nltk.download('punkt_tab', quiet=True)"
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2 --threads 4
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
       - key: FLASK_DEBUG
         value: "false"
+      - key: RENDER
+        value: "true"

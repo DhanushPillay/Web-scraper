@@ -1,0 +1,76 @@
+domain,credibility_score,bias,factual_reporting,country
+reuters.com,95,center,very high,uk
+apnews.com,95,center,very high,us
+bbc.com,92,center,very high,uk
+npr.org,90,left-center,very high,us
+nytimes.com,88,left-center,very high,us
+washingtonpost.com,88,left-center,very high,us
+wsj.com,88,right-center,very high,us
+theguardian.com,85,left-center,very high,uk
+economist.com,90,center,very high,uk
+ft.com,90,center,very high,uk
+bloomberg.com,88,center,very high,us
+arstechnica.com,85,left-center,very high,us
+theverge.com,80,left-center,high,us
+techcrunch.com,78,left-center,high,us
+wired.com,82,left-center,high,us
+engadget.com,75,center,high,us
+news.ycombinator.com,70,user-generated,mixed,us
+reddit.com,50,user-generated,mixed,us
+cnn.com,65,left,high,us
+foxnews.com,55,right,mixed,us
+msnbc.com,60,left,mixed,us
+nypost.com,40,right,low,us
+dailymail.co.uk,35,right,low,uk
+thesun.co.uk,30,right,low,uk
+express.co.uk,35,right,low,uk
+mirror.co.uk,35,left,low,uk
+buzzfeed.com,45,left-center,mixed,us
+breitbart.com,25,right,very low,us
+infowars.com,10,right,very low,us
+naturalnews.com,15,right,very low,us
+beforeitsnews.com,10,right,very low,us
+yournewswire.com,10,right,very low,us
+theonion.com,5,satire,satire,us
+dailywire.com,35,right,low,us
+pjmedia.com,30,right,low,us
+townhall.com,35,right,low,us
+newsmax.com,30,right,low,us
+oann.com,20,right,very low,us
+epochtimes.com,30,right,low,us
+zerohedge.com,25,right,low,us
+rt.com,35,left,low,russia
+sputniknews.com,30,left,low,russia
+presstv.ir,25,left,very low,iran
+globaltimes.cn,30,left,low,china
+xinhuanet.com,35,left,low,china
+aljazeera.com,65,left-center,high,qatar
+france24.com,75,center,high,france
+dw.com,80,center,high,germany
+abc.net.au,85,center,very high,australia
+cbc.ca,85,center,very high,canada
+smh.com.au,80,left-center,high,australia
+theage.com.au,80,left-center,high,australia
+theaustralian.com.au,70,right-center,high,australia
+nzherald.co.nz,75,center,high,newzealand
+stuff.co.nz,70,center,high,newzealand
+timesofindia.indiatimes.com,55,left-center,mixed,india
+thehindu.com,70,left-center,high,india
+indianexpress.com,65,center,high,india
+ndtv.com,60,left-center,mixed,india
+scmp.com,65,left-center,high,hongkong
+japantimes.co.jp,75,center,high,japan
+korea-times.co.kr,65,center,high,southkorea
+straitstimes.com,70,center,high,singapore
+channelnewsasia.com,70,center,high,singapore
+malaymail.com,55,center,mixed,malaysia
+thestar.com.my,60,center,mixed,malaysia
+philstar.com,50,left-center,mixed,philippines
+inquirer.net,55,left-center,mixed,philippines
+rappler.com,65,left-center,high,philippines
+bangkokpost.com,60,center,mixed,thailand
+nationthailand.com,55,center,mixed,thailand
+thejakartapost.com,60,center,mixed,indonesia
+manilatimes.net,50,left-center,mixed,philippines
+vietnamnews.vn,55,left,low,vietnam
+vnexpress.net,50,left,mixed,vietnam

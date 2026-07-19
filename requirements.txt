@@ -1,9 +1,8 @@
 flask==3.0.3
 requests==2.32.3
 beautifulsoup4==4.12.3
-newspaper3k==0.2.8
+aiohttp==3.10.10
 nltk==3.9.1
-lxml_html_clean==0.4.1
 urllib3==2.3.0
 feedparser==6.0.11
 apscheduler==3.10.4
@@ -14,3 +13,10 @@ flask-talisman==1.1.0
 flask-limiter==3.8.0
 flask-cors==5.0.0
 redis==5.2.0
+
+# Database
+psycopg2-binary==2.9.10
+
+# Summarization (replaces newspaper3k)
+trafilatura>=2.0.0
+lxml>=5.0.0

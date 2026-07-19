@@ -14,7 +14,10 @@ import logging
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from newspaper import Article as NewspaperArticle
+import aiohttp
+import asyncio
+
+from utils.credibility import is_credible, score_article
 
 logger = logging.getLogger(__name__)
 
@@ -54,19 +57,24 @@ def _clean_excerpt(text: str) -> str:
     text = re.sub(r'#\s*Comments:\s*\d+', '', text)
     # Normalize whitespace
     text = re.sub(r'\s+', ' ', text).strip()
-    # Truncate at word boundary
+# Truncate at word boundary
     if len(text) > EXCERPT_MAX_LEN:
         text = text[:EXCERPT_MAX_LEN].rsplit(' ', 1)[0] + '…'
     return text
 
 
-def _fetch_article_image(url: str, timeout: int = 5) -> str:
-    """Fetch the top image from an article page via newspaper3k. Returns '' on failure."""
+async def _fetch_article_image_async(session: aiohttp.ClientSession, url: str) -> str:
+    """Fetch the top image from an article page via meta tags."""
     try:
-        art = NewspaperArticle(url)
-        art.download()
-        art.parse()
-        return art.top_image or ''
+        async with session.get(url, timeout=5) as response:
+            if response.status != 200:
+                return ''
+            html = await response.text()
+            soup = BeautifulSoup(html, 'html.parser')
+            meta_og_image = soup.find('meta', property='og:image')
+            if meta_og_image and meta_og_image.get('content'):
+                return str(meta_og_image['content'])
+            return ''
     except Exception:
         return ''
 
@@ -484,8 +492,8 @@ class NewsAggregator:
         self.articles: list[dict] = []
         self._last_scrape_time: float = 0
 
-    def scrape_all(self, hn_pages: int = 1, force: bool = False) -> None:
-        """Runs all scrapers in parallel. Skips if cache is still valid."""
+    async def scrape_all_async(self, hn_pages: int = 1, force: bool = False) -> None:
+        """Runs all scrapers in parallel (async). Skips if cache is still valid."""
         # Cache check — avoid re-scraping if data is fresh
         if not force and self.articles and (time.time() - self._last_scrape_time) < self.CACHE_TTL:
             logger.info(f"Cache still valid ({int(self.CACHE_TTL - (time.time() - self._last_scrape_time))}s remaining). Skipping scrape.")
@@ -493,40 +501,56 @@ class NewsAggregator:
 
         self.articles = []
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = []
-            for scraper in self.scrapers:
-                pages = hn_pages if isinstance(scraper, HackerNewsScraper) else 1
-                futures.append(executor.submit(scraper.scrape, pages))
+        # Run all scrapers concurrently using asyncio.gather
+        scrape_tasks = []
+        for scraper in self.scrapers:
+            pages = hn_pages if isinstance(scraper, HackerNewsScraper) else 1
+            scrape_tasks.append(asyncio.to_thread(scraper.scrape, pages))
 
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result:
-                        self.articles.extend(result)
-                except Exception as e:
-                    logger.error(f"Scraper thread failed: {e}")
+        results = await asyncio.gather(*scrape_tasks, return_exceptions=True)
 
-        self._enrich_images()
+        for scraper, result in zip(self.scrapers, results):
+            if isinstance(result, Exception):
+                logger.error(f"Scraper {scraper.__class__.__name__} failed: {result}")
+                continue
+            if result:
+                # Apply credibility filter before adding
+                valid_articles = []
+                for a in result:
+                    if is_credible(a.get('title', ''), a.get('link', '')):
+                        # Add credibility details to article
+                        _, cred = score_article(a.get('title', ''), a.get('link', ''))
+                        a['credibility'] = cred
+                        valid_articles.append(a)
+                self.articles.extend(valid_articles)
+
+        # Async image enrichment (single event loop)
+        await self._enrich_images_async()
+            
         self._last_scrape_time = time.time()
         logger.info(f"Total articles scraped: {len(self.articles)}")
 
-    def _enrich_images(self) -> None:
-        """Fetch real images for articles missing image_url (concurrent)."""
+    def scrape_all(self, hn_pages: int = 1, force: bool = False) -> None:
+        """Synchronous wrapper for backward compatibility."""
+        asyncio.run(self.scrape_all_async(hn_pages, force))
+
+    async def _enrich_images_async(self) -> None:
+        """Fetch real images for articles missing image_url concurrently."""
         missing = [a for a in self.articles if not a.get('image_url')]
         if not missing:
             return
         logger.info(f"Enriching images for {len(missing)} articles...")
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(_fetch_article_image, a['link']): a for a in missing}
-            for future in as_completed(futures):
-                article = futures[future]
-                try:
-                    img = future.result()
-                    if img:
-                        article['image_url'] = img
-                except Exception:
-                    pass
+        
+        async with aiohttp.ClientSession(headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}) as session:
+            tasks = []
+            for article in missing:
+                tasks.append(_fetch_article_image_async(session, article['link']))
+                
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for article, img in zip(missing, results):
+                if isinstance(img, str) and img:
+                    article['image_url'] = img
 
     def get_articles(self) -> list[dict]:
         return self.articles

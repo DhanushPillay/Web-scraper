@@ -24,7 +24,6 @@ from flask import (Flask, render_template, request, Response,
 from flask.typing import ResponseReturnValue
 from web_scraper import NewsAggregator
 from database import Database
-from newspaper import Article
 import nltk
 
 # Security extensions
@@ -62,13 +61,18 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Ensure NLTK data is downloaded
-for resource in ['tokenizers/punkt', 'tokenizers/punkt_tab',
-                 'sentiment/vader_lexicon.zip', 'corpora/stopwords']:
-    try:
-        nltk.data.find(resource)
-    except LookupError:
-        nltk.download(resource.split('/')[-1].replace('.zip', ''), quiet=True)
+# Ensure NLTK data is downloaded (lazy, non-blocking)
+def ensure_nltk_data():
+    """Download NLTK data if missing. Called on first use, not at import."""
+    for resource in ['tokenizers/punkt', 'tokenizers/punkt_tab',
+                     'sentiment/vader_lexicon', 'corpora/stopwords']:
+        try:
+            nltk.data.find(resource)
+        except LookupError:
+            nltk.download(resource.split('/')[-1], quiet=True)
+
+# Call once at startup (after imports, before routes)
+ensure_nltk_data()
 
 app = Flask(__name__)
 
@@ -172,13 +176,17 @@ if _cors_available:
 else:
     logger.warning("Flask-CORS not available. CORS not configured.")
 
-# Initialize Database & Aggregator (shared instance for caching)
+# Initialize Database (shared)
 db = Database()
-aggregator = NewsAggregator()
 
 # ──────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────
+
+def get_aggregator() -> NewsAggregator:
+    """Create a fresh NewsAggregator instance (not shared across requests/workers)."""
+    from web_scraper import NewsAggregator
+    return NewsAggregator()
 
 MAX_SCRAPE_PAGES = 5
 MAX_PAGE_NUMBER = 1000
@@ -495,8 +503,9 @@ def background_scrape():
     """Background job: scrapes all sources and saves to DB."""
     logger.info("[Scheduler] Running background scrape...")
     try:
-        aggregator.scrape_all(hn_pages=1, force=True)
-        new_articles = aggregator.get_articles()
+        agg = get_aggregator()
+        agg.scrape_all(hn_pages=1, force=True)
+        new_articles = agg.get_articles()
         if new_articles:
             db.add_articles(new_articles)
             db.upsert_images(new_articles)
@@ -587,8 +596,9 @@ def index():
 
             if should_scrape:
                 logger.info("Scraping fresh data and saving to DB...")
-                aggregator.scrape_all(hn_pages=pages, force=force_refresh)
-                new_articles = aggregator.get_articles()
+                agg = get_aggregator()
+                agg.scrape_all(hn_pages=pages, force=force_refresh)
+                new_articles = agg.get_articles()
                 db.add_articles(new_articles)
                 db.upsert_images(new_articles)
                 # Process metadata for new articles
@@ -614,7 +624,7 @@ def index():
     stats = db.get_stats()
 
     # Source health
-    health = aggregator.get_health()
+    health = get_aggregator().get_health()
 
     return render_template('index.html',
                            articles=articles,
@@ -722,7 +732,7 @@ def api_search() -> ResponseReturnValue:
 @app.route('/api/health')
 def api_health() -> ResponseReturnValue:
     """Returns scraper health status for all sources."""
-    return jsonify({'sources': aggregator.get_health()})
+    return jsonify({'sources': get_aggregator().get_health()})
 
 
 @app.route('/api/personalized')
@@ -735,7 +745,7 @@ def api_personalized() -> ResponseReturnValue:
 @app.route('/api/summarize', methods=['POST'])
 @rate_limit("20 per minute")
 def summarize() -> ResponseReturnValue:
-    """Summarizes a given URL using newspaper3k."""
+    """Summarizes a given URL using trafilatura (fast, no ML deps)."""
     data = get_json_payload()
     if data is None:
         return jsonify({'error': 'Invalid JSON payload'}), 400
@@ -752,15 +762,38 @@ def summarize() -> ResponseReturnValue:
         return jsonify({'error': 'URL not allowed'}), 400
 
     try:
-        article = Article(url)
-        article.download()
-        article.parse()
-        article.nlp()
+        import trafilatura
+        downloaded = trafilatura.fetch_url(url, timeout=10)
+        if not downloaded:
+            return jsonify({'error': 'Failed to fetch URL'}), 500
+
+        # Extract main content
+        result = trafilatura.extract(
+            downloaded,
+            include_comments=False,
+            include_tables=False,
+            include_images=False,
+            output_format='json',
+            with_metadata=True
+        )
+        
+        if result:
+            import json
+            data = json.loads(result)
+            title = data.get('title', '')
+            summary = data.get('excerpt', data.get('raw_text', ''))[:500]
+            image = data.get('image', '')
+        else:
+            # Fallback: extract text only
+            text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+            title = ''
+            summary = text[:500] if text else 'Could not extract content'
+            image = ''
 
         return jsonify({
-            'title': article.title,
-            'summary': article.summary,
-            'top_image': article.top_image
+            'title': title,
+            'summary': summary,
+            'top_image': image
         })
     except Exception as e:
         logger.warning(f"Failed to summarize {url}: {e}")
