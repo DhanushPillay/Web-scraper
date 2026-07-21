@@ -1,3 +1,22 @@
+---
+title: Sniffer
+emoji: 🔍
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+sdk_version: "4.1.0"
+python_version: "3.10"
+app_port: 7860
+tags:
+  - flask
+  - news
+  - scraper
+  - pwa
+  - tech-news
+  - rss
+  - sentiment-analysis
+---
+
 # Sniffer
 
 ![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
@@ -46,155 +65,61 @@ Sniffer is a Flask application that collects technology stories from five major 
 - **Database indexes** — `created_at`, `source`, `is_saved`, `is_read`, `category`, `score`.
 - **WAL mode** — better concurrent read performance.
 
-## Prerequisites
-
-- Python 3.8+
-- Internet access
-
-## Installation
-
-1. Clone repository.
+## Quick Start (Local)
 
 ```bash
-git clone https://github.com/DhanushPillay/Web-scraper.git
-cd Web-scraper
+git clone https://huggingface.co/spaces/your-username/sniffer
+cd sniffer
+docker build -t sniffer .
+docker run -p 7860:7860 sniffer
+# Open http://localhost:7860
 ```
 
-2. Install dependencies.
-
+Or without Docker:
 ```bash
 pip install -r requirements.txt
-```
-
-3. Run the app.
-
-```bash
+python -c "import nltk; [nltk.download(r, quiet=True) for r in ['punkt','punkt_tab','vader_lexicon','stopwords']]"
 python app.py
 ```
 
-Open http://127.0.0.1:5000/.
+## Configuration (Environment Variables)
 
-## Configuration
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SECRET_KEY` | No | random | Flask secret |
+| `WEBHOOK_URL` | No | — | Slack/Discord webhook for `/api/webhook/test` |
+| `SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` | No | — | Email digest via `/api/email/digest` |
+| `DATABASE_URL` | No | SQLite | Postgres DSN (Render, etc.) |
+| `ALLOWED_ORIGINS` | No | — | CORS origins for API |
+| `TRUSTED_HOSTS` | No | localhost | Host header allowlist |
 
-Optional environment variables:
+## API Reference
 
-- FLASK_DEBUG: true or false
-- WEBHOOK_URL: URL used by POST /api/webhook/test
-- SMTP_HOST: SMTP server host
-- SMTP_PORT: SMTP server port (default 587)
-- SMTP_USER: SMTP username/email
-- SMTP_PASS: SMTP password/app password
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Dashboard (scrape + filter) |
+| GET | `/saved` | Bookmarked articles |
+| GET | `/download` | CSV export |
+| GET | `/export/json` | JSON export (bookmarks) |
+| GET | `/export/markdown` | Markdown export (bookmarks) |
+| POST | `/bookmark` | Toggle bookmark `{article_id}` |
+| POST | `/toggle_read` | Toggle read status `{article_id}` |
+| POST | `/subscribe` | Email subscribe `{email}` |
+| GET | `/api/stats` | Aggregate stats |
+| GET | `/api/search?q=` | FTS5 search |
+| GET | `/api/health` | Scraper health |
+| GET | `/api/personalized` | Personalized feed |
+| GET | `/api/articles/load-more` | Paginated articles |
+| POST | `/api/summarize` | Summarize URL `{url}` |
+| POST | `/api/webhook/test` | Test webhook (needs `WEBHOOK_URL`) |
+| POST | `/api/email/digest` | Send digest (needs SMTP) |
 
-## Project Structure
+## HF Spaces Notes
 
-```text
-Web-scraper/
-|-- app.py
-|-- web_scraper.py
-|-- database.py
-|-- templates/
-|   `-- index.html
-|-- static/
-|   |-- css/
-|   |   `-- app.css
-|   |-- js/
-|   |   `-- app.js
-|   |-- service-worker.js
-|   `-- icons/         # PWA icons
-|-- doc/
-|   `-- project_explanation.md
-|-- tests/
-|-- requirements.txt
-`-- sniffer.db        # runtime generated
-```
-
-## Database Model
-
-Main table: `articles`
-
-| Column | Type | Notes |
-|--------|------|-------|
-| id | INTEGER PK AUTOINCREMENT | |
-| title | TEXT NOT NULL | |
-| link | TEXT UNIQUE NOT NULL | dedup key |
-| score | INTEGER DEFAULT 0 | |
-| author | TEXT | |
-| time_posted | TEXT | |
-| comments | TEXT | |
-| source | TEXT | |
-| created_at | REAL | |
-| is_saved | INTEGER DEFAULT 0 | |
-| is_read | INTEGER DEFAULT 0 | |
-| sentiment | TEXT DEFAULT 'neutral' | |
-| sentiment_score | REAL DEFAULT 0.0 | |
-| category | TEXT DEFAULT 'general' | |
-| read_time | INTEGER DEFAULT 0 | |
-| metadata_processed_at | REAL | idempotency marker |
-| **excerpt** | TEXT DEFAULT '' | ~280 char RSS preview |
-
-FTS table: `articles_fts(title, author, source, excerpt)` with triggers for insert/update/delete sync.
-
-## API and Routes
-
-UI routes:
-
-- GET `/` — dashboard
-- POST `/` — scrape + filter form submit
-- GET `/saved` — bookmarked list
-- GET `/download` — CSV export (streamed)
-- GET `/export/json` — bookmarked JSON export
-- GET `/export/markdown` — bookmarked Markdown export
-- GET `/manifest.json` — PWA manifest
-- GET `/service-worker.js` — service worker
-
-JSON API routes:
-
-- POST `/bookmark` — toggle bookmark, body `{ article_id }`
-- POST `/toggle_read` — toggle read status, body `{ article_id }`
-- POST `/subscribe` — subscribe email, body `{ email }`
-- GET `/api/stats` — aggregate stats
-- GET `/api/search?q=...` — full-text search
-- GET `/api/health` — scraper health snapshot
-- GET `/api/personalized` — personalized feed
-- GET `/api/articles/load-more` — paginated article fetch (page, sort, source, keyword, category)
-- POST `/api/summarize` — summarize URL, body `{ url }`
-- POST `/api/webhook/test` — send sample digest to WEBHOOK_URL
-- POST `/api/email/digest` — send digest via SMTP to body `{ email }`
-
-## Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| J / ↓ | Next article |
-| K / ↑ | Previous article |
-| O / Enter | Open article |
-| B | Toggle bookmark |
-| R | Toggle read |
-| / | Focus search |
-| ? | Show help |
-| Esc | Close modal / help |
-
-## Notes on Runtime Behavior
-
-- Scheduler runs every 15 minutes when APScheduler is installed.
-- In debug mode, scheduler startup is guarded to avoid duplicate runs.
-- Metadata enrichment processes only rows where `metadata_processed_at IS NULL`.
-- Sort order for paginated queries is handled in SQL for consistency.
-- Service worker caches static assets and API responses for offline reading.
-- Excerpt extraction strips HTML, normalizes whitespace, and truncates at word boundary.
-
-## Troubleshooting
-
-- Missing NLTK resources: start app once and let auto-download complete.
-- Empty source results: source may be temporarily unavailable or rate-limited.
-- SMTP errors: verify SMTP_* variables and app-password requirements.
-- Webhook test blocked: ensure WEBHOOK_URL passes safe URL checks.
-- Database locked: enable WAL mode (`PRAGMA journal_mode=WAL`).
-
-## Development Status
-
-- Tests directory exists but currently has no test files.
-- CI workflow is not configured yet.
+- **SQLite is ephemeral** — data resets on rebuild. For persistence, set `DATABASE_URL` to a managed Postgres (e.g., Neon, Supabase).
+- **APScheduler disabled** on HF free tier (no background workers). Use "Refresh" button to scrape manually.
+- **Port 7860** is required by HF Spaces (configured in Dockerfile).
+- **First load** may take 15–30s while scrapers fetch and enrich articles.
 
 ## License
 
