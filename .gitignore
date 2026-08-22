@@ -5,3 +5,15 @@ sniffer.db
 .venv/
 *.db
 verify.py
+.env
+.env.*
+instance/
+*.log
+.mypy_cache/
+.pytest_cache/
+# lake — generated, not committed (keep structure via .gitkeep)
+data/bronze/
+data/silver/
+data/gold/
+data/watermark.json
+data/data_quality.log

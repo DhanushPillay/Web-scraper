@@ -12,19 +12,19 @@ from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Clickbait patterns (regex for common clickbait phrases)
+# Clickbait patterns (word-boundary aware to avoid 'secret' -> 'secretary')
 CLICKBAIT_PATTERNS = [
     r"you won't believe",
-    r"shocking",
-    r"mind.?blowing",
+    r"\bshocking\b",
+    r"\bmind.?blowing\b",
     r"this one trick",
     r"what happens next",
     r"goes viral",
-    r"destroys?",
-    r"slams?",
+    r"\bdestroys?\b",
+    r"\bslams?\b",
     r"one weird trick",
     r"is this the end",
-    r"secret",
+    r"\bsecret\b",
     r"they don't want you to know",
     r"doctors hate",
     r"will change your life",
@@ -33,9 +33,9 @@ CLICKBAIT_PATTERNS = [
     r"you need to see",
     r"this is (insane|crazy|unbelievable)",
     r"(real|true) story",
-    r"exposed",
-    r"revealed",
-    r"leaked",
+    r"\bexposed\b",
+    r"\brevealed\b",
+    r"\bleaked\b",
 ]
 
 CLICKBAIT_REGEX = re.compile('|'.join(CLICKBAIT_PATTERNS), re.IGNORECASE)

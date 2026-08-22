@@ -1,158 +1,131 @@
-/** Sniffer — small, accessible feed interactions. */
+/** Sniffer — drawer + interactions (compact row layout) */
+const $ = (s,c=document)=>c.querySelector(s);
+const $$ = (s,c=document)=>[...c.querySelectorAll(s)];
 
-const $ = (selector, context = document) => context.querySelector(selector);
-const $$ = (selector, context = document) => [...context.querySelectorAll(selector)];
-
-const icons = {
-  saved: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
-  bookmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
-  read: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-  unread: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>'
+const icons={
+  saved:'<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+  bookmark:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+  read:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12l5 5L20 7"/></svg>',
+  unread:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 12l2 2 4-4"/></svg>'
 };
 
-function toast(message, type = 'success') {
-  const container = $('#toastContainer');
-  if (!container) return;
-  const item = document.createElement('div');
-  item.className = `toast toast-${type}`;
-  item.setAttribute('role', 'status');
-  item.textContent = message;
-  container.append(item);
-  window.setTimeout(() => item.remove(), 3600);
+function toast(msg,type='success'){
+  const c=$('#toastContainer'); if(!c) return;
+  const el=document.createElement('div');
+  el.className=`toast${type==='error'?' toast-error':''}`;
+  el.textContent=msg; c.append(el);
+  setTimeout(()=>el.remove(),3200);
+}
+async function request(url,opts={}){
+  const r=await fetch(url,{headers:{'Content-Type':'application/json',...opts.headers},...opts});
+  const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.message||d.error||'Something went wrong'); return d;
+}
+function setActionState(btn,active,type){
+  btn.classList.toggle('is-active',active);
+  btn.setAttribute('aria-pressed',String(active));
+  const isBook=type==='bookmark';
+  btn.title=isBook?(active?'Remove from saved':'Save'):(active?'Mark unread':'Mark read');
+  const svg=btn.querySelector('svg'); if(svg) svg.remove();
+  btn.insertAdjacentHTML('afterbegin', isBook?(active?icons.saved:icons.bookmark):(active?icons.read:icons.unread));
+}
+async function toggleArticleState(btn,action){
+  const card=btn.closest('[data-article-id]'); if(!card||btn.disabled) return;
+  btn.disabled=true;
+  try{
+    const ep=action==='bookmark'?'/bookmark':'/toggle_read';
+    const d=await request(ep,{method:'POST',body:JSON.stringify({article_id:Number(card.dataset.articleId)})});
+    const active=d.status===(action==='bookmark'?'saved':'read');
+    setActionState(btn,active,action);
+    if(action==='read') card.classList.toggle('is-read',active);
+    toast(active?(action==='bookmark'?'Saved':'Marked read'):(action==='bookmark'?'Removed':'Marked unread'));
+  }catch(e){ toast(e.message||'Could not update','error'); } finally{ btn.disabled=false; }
 }
 
-async function request(url, options = {}) {
-  const response = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || data.error || 'Something went wrong');
-  return data;
+// Drawer
+function openDrawer(){
+  const d=$('#summaryDrawer'), o=$('#drawerOverlay');
+  d?.classList.add('show'); o?.classList.add('show');
+  d?.setAttribute('aria-hidden','false'); o?.setAttribute('aria-hidden','false');
+  document.body.style.overflow='hidden';
+  setTimeout(()=> $('[data-drawer-close]',d)?.focus(), 10);
 }
-
-function setActionState(button, active, type) {
-  button.classList.toggle('is-active', active);
-  button.setAttribute('aria-pressed', String(active));
-  button.title = type === 'bookmark'
-    ? active ? 'Remove from saved' : 'Save article'
-    : active ? 'Mark unread' : 'Mark read';
-  button.querySelector('svg')?.remove();
-  button.insertAdjacentHTML('afterbegin', type === 'bookmark'
-    ? active ? icons.saved : icons.bookmark
-    : active ? icons.read : icons.unread);
+function closeDrawer(){
+  const d=$('#summaryDrawer'), o=$('#drawerOverlay');
+  d?.classList.remove('show'); o?.classList.remove('show');
+  d?.setAttribute('aria-hidden','true'); o?.setAttribute('aria-hidden','true');
+  document.body.style.overflow='';
 }
+// legacy compat
+function openSummary(){ openDrawer(); }
+function closeSummary(){ closeDrawer(); }
 
-async function toggleArticleState(button, action) {
-  const card = button.closest('[data-article-id]');
-  if (!card || button.disabled) return;
-  button.disabled = true;
-  try {
-    const endpoint = action === 'bookmark' ? '/bookmark' : '/toggle_read';
-    const data = await request(endpoint, {
-      method: 'POST',
-      body: JSON.stringify({ article_id: Number(card.dataset.articleId) })
-    });
-    const active = data.status === (action === 'bookmark' ? 'saved' : 'read');
-    setActionState(button, active, action);
-    if (action === 'read') card.classList.toggle('is-read', active);
-    toast(action === 'bookmark' ? active ? 'Added to your reading list' : 'Removed from saved' : active ? 'Marked as read' : 'Marked as unread');
-  } catch (error) {
-    toast(error.message || 'Could not update this article', 'error');
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function openSummary() {
-  const modal = $('#summaryModal');
-  modal?.classList.add('show');
-  modal?.setAttribute('aria-hidden', 'false');
-  document.body.classList.add('has-modal');
-  window.setTimeout(() => $('[data-modal-close]', modal)?.focus(), 0);
-}
-
-function closeSummary() {
-  const modal = $('#summaryModal');
-  modal?.classList.remove('show');
-  modal?.setAttribute('aria-hidden', 'true');
-  document.body.classList.remove('has-modal');
-}
-
-async function summarizeArticle(url) {
-  const body = $('#summaryBody');
-  const title = $('#summaryTitle');
-  const readLink = $('#summaryReadLink');
-  if (!body || !title || !readLink) return;
-
-  title.textContent = 'Article summary';
-  body.innerHTML = '<div class="tp-summary-loading"><span></span><p>Preparing a short summary…</p></div>';
-  readLink.hidden = true;
-  openSummary();
-  try {
-    const data = await request('/api/summarize', { method: 'POST', body: JSON.stringify({ url }) });
-    title.textContent = data.title || 'Article summary';
-    const safeSummary = document.createElement('div');
-    safeSummary.textContent = data.summary || 'A summary was not available for this article.';
-    body.replaceChildren(safeSummary);
-    readLink.href = url;
-    readLink.hidden = false;
-  } catch (error) {
-    body.textContent = error.message || 'Unable to summarize this article right now.';
-  }
-}
-
-function initScrollTop() {
-  const button = $('#scrollTop');
-  if (!button) return;
-  const update = () => button.classList.toggle('visible', window.scrollY > 420);
-  window.addEventListener('scroll', update, { passive: true });
-  button.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
-  update();
-}
-
-function initKeyboardSearch() {
-  document.addEventListener('keydown', (event) => {
-    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
-    if (event.key === '/' && !typing) {
-      event.preventDefault();
-      $('#searchInput')?.focus();
+async function summarizeArticle(url, titleHint){
+  const body=$('#drawerBody'), title=$('#drawerTitle'), meta=$('#drawerMeta'), link=$('#drawerLink');
+  if(!body||!title) return;
+  title.textContent=titleHint||'Quick read'; meta.textContent='Fetching…';
+  body.innerHTML='<div class="sn-summary-loading"><span></span><p>Extracting summary…</p></div>';
+  if(link){ link.hidden=true; link.href=url; }
+  openDrawer();
+  try{
+    const d=await request('/api/summarize',{method:'POST',body:JSON.stringify({url})});
+    title.textContent=d.title||titleHint||'Quick read';
+    meta.textContent=`${d.read_time||3} min · ${d.word_count||''} words`.replace('  ',' ');
+    const frag=document.createDocumentFragment();
+    if(d.dek){
+      const dekEl=document.createElement('p'); dekEl.className='sn-drawer-dek'; dekEl.textContent=d.dek; frag.append(dekEl);
     }
-    if (event.key === 'Escape') closeSummary();
+    if(d.bullets && d.bullets.length){
+      const ul=document.createElement('ul'); ul.className='sn-drawer-bullets';
+      d.bullets.forEach(b=>{ const li=document.createElement('li'); li.textContent=b; ul.append(li); });
+      frag.append(ul);
+    } else if(d.summary){
+      const p=document.createElement('p'); p.textContent=d.summary; frag.append(p);
+    }
+    body.replaceChildren(frag);
+    if(link){ link.href=url; link.hidden=false; }
+  }catch(e){
+    body.textContent=e.message||'Unable to summarize — try opening the article directly.';
+  }
+}
+
+function initScrollTop(){
+  const b=$('#scrollTop'); if(!b) return;
+  const upd=()=>b.classList.toggle('visible', window.scrollY>350);
+  window.addEventListener('scroll',upd,{passive:true}); b.addEventListener('click',()=>window.scrollTo({top:0,behavior:'smooth'})); upd();
+}
+function initKeys(){
+  document.addEventListener('keydown',e=>{
+    const typing=['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName);
+    if(e.key==='/'&&!typing){ e.preventDefault(); $('#searchInput')?.focus(); }
+    if(e.key==='Escape') closeDrawer();
   });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  $('#scrapeForm')?.addEventListener('submit', () => {
-    const overlay = $('#loadingOverlay');
-    const progress = $('#loadingProgress');
-    overlay?.classList.add('show');
-    if (!progress) return;
-    const steps = [
-      [3000, 'Fetching articles from sources…'],
-      [8000, 'Extracting article images…'],
-      [16000, 'Almost ready…'],
-    ];
-    const start = Date.now();
-    const id = setInterval(() => {
-      const elapsed = Date.now() - start;
-      for (const [ms, text] of steps) {
-        if (elapsed >= ms) progress.textContent = text;
-      }
-      if (elapsed >= 20000) clearInterval(id);
-    }, 1000);
+document.addEventListener('DOMContentLoaded',()=>{
+  $('#scrapeForm')?.addEventListener('submit',()=>{
+    const o=$('#loadingOverlay'), p=$('#loadingProgress'); o?.classList.add('show');
+    if(!p) return;
+    const steps=[[2000,'Scanning sources…'],[6000,'Processing stories…'],[12000,'Almost done…']];
+    const s=Date.now();
+    const id=setInterval(()=>{
+      const e=Date.now()-s;
+      for(const[ms,t] of steps) if(e>=ms) p.textContent=t;
+      if(e>=16000) clearInterval(id);
+    },800);
   });
-  document.addEventListener('click', (event) => {
-    const action = event.target.closest('[data-action]');
-    if (action) {
-      const type = action.dataset.action;
-      if (type === 'bookmark' || type === 'read') toggleArticleState(action, type);
-      if (type === 'summary') summarizeArticle(action.dataset.url);
+  document.addEventListener('click',e=>{
+    const a=e.target.closest('[data-action]');
+    if(a){
+      const t=a.dataset.action;
+      if(t==='bookmark'||t==='read') toggleArticleState(a,t);
+      if(t==='summary') summarizeArticle(a.dataset.url, a.dataset.title||a.closest('[data-article-id]')?.querySelector('.sn-row-title, .sn-featured-title')?.textContent?.trim());
       return;
     }
-    if (event.target.closest('[data-modal-close]')) closeSummary();
-    if (event.target === $('#summaryModal')) closeSummary();
+    if(e.target.closest('[data-drawer-close]')) closeDrawer();
+    if(e.target===$('#drawerOverlay')) closeDrawer();
+    // legacy
+    if(e.target.closest('[data-modal-close]')) closeDrawer();
+    if(e.target===$('#summaryModal')) closeDrawer();
   });
-  initScrollTop();
-  initKeyboardSearch();
+  initScrollTop(); initKeys();
 });

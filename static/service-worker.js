@@ -1,7 +1,6 @@
 // Service Worker — Sniffer
-const CACHE_NAME = 'sniffer-v1';
+const CACHE_NAME = 'sniffer-v2';
 const APP_SHELL = [
-    '/',
     '/static/css/app.css',
     '/static/js/app.js',
 ];
@@ -29,21 +28,23 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
     const url = new URL(event.request.url);
+    const isGet = event.request.method === 'GET';
 
-    // Network-first for API calls and dynamic data
-    if (url.pathname.startsWith('/api/') || url.pathname === '/bookmark' || url.pathname === '/toggle_read') {
+    // Network-first for dynamic content (API, actions, HTML pages)
+    if (!isGet || url.pathname.startsWith('/api/') || url.pathname === '/bookmark' || url.pathname === '/toggle_read'
+        || url.pathname === '/' || url.pathname === '/saved' || url.pathname.startsWith('/download') || url.pathname.startsWith('/export')) {
         event.respondWith(
             fetch(event.request).catch(() => caches.match(event.request))
         );
         return;
     }
 
-    // Stale-while-revalidate for app shell
+    // Cache-first for static assets (css/js/images) — stale-while-revalidate
     event.respondWith(
         caches.open(CACHE_NAME).then(cache => {
             return cache.match(event.request).then(cached => {
                 const fetched = fetch(event.request).then(response => {
-                    if (response.ok) {
+                    if (response.ok && response.type === 'basic') {
                         cache.put(event.request, response.clone());
                     }
                     return response;

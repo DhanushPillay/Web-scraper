@@ -1,170 +1,173 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Sniffer — a focused, personal tech-news briefing.">
-    <title>Sniffer · Your tech briefing</title>
+    <meta name="description" content="Sniffer — a signal-first tech briefing. Scan 300+ stories, ranked for signal over noise.">
+    <title>Sniffer · Tech Briefing</title>
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#0a0a0c">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <meta name="theme-color" content="#101114">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/style.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/style.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
-    <nav class="tp-navbar" aria-label="Primary navigation">
-        <div class="tp-navbar-inner">
-            <a href="{{ url_for('index') }}" class="tp-brand" aria-label="Sniffer home">
-                <svg viewBox="0 0 24 24" fill="none" stroke="url(#brandGrad)" stroke-width="2.5" width="26" height="26" aria-hidden="true">
-                    <defs>
-                        <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                            <stop offset="0%" stop-color="#60a5fa"/>
-                            <stop offset="100%" stop-color="#a78bfa"/>
-                        </linearGradient>
-                    </defs>
-                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                </svg>
+    <nav class="sn-navbar" aria-label="Primary">
+        <div class="sn-navbar-inner">
+            <a href="{{ url_for('index') }}" class="sn-brand" aria-label="Sniffer home">
+                <span class="sn-brand-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                </span>
                 <span>SNIFFER</span>
             </a>
-
-            <div class="tp-nav-links" aria-label="Feed views">
-                <a href="{{ url_for('index') }}" class="tp-nav-link {% if not showing_saved %}is-active{% endif %}">Feed</a>
-                <a href="{{ url_for('saved_articles') }}" class="tp-nav-link {% if showing_saved %}is-active{% endif %}">Saved <span>{{ stats.saved if stats else 0 }}</span></a>
+            <div class="sn-nav-links">
+                <a href="{{ url_for('index') }}" class="sn-nav-link {% if not showing_saved %}is-active{% endif %}">Feed</a>
+                <a href="{{ url_for('saved_articles') }}" class="sn-nav-link {% if showing_saved %}is-active{% endif %}">Saved <span class="sn-count">{{ stats.saved if stats else 0 }}</span></a>
             </div>
-
-            <form method="GET" action="{{ url_for('index') }}" class="tp-search-form" role="search">
-                <label class="sr-only" for="searchInput">Search articles</label>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tp-search-icon" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                <input id="searchInput" type="search" name="keyword" placeholder="Search the briefing" value="{{ keyword|default('') }}" autocomplete="off" class="tp-search-input">
+            <form method="GET" action="{{ url_for('index') }}" class="sn-search-form" role="search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sn-search-icon" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+                <input id="searchInput" type="search" name="keyword" placeholder="Search stories…" value="{{ keyword|default('') }}" autocomplete="off" class="sn-search-input">
                 <input type="hidden" name="source" value="{{ source_filter|default('all') }}">
                 <input type="hidden" name="category" value="{{ category_filter|default('all') }}">
                 <input type="hidden" name="sort" value="{{ sort_by|default('score') }}">
             </form>
-
-            <div class="tp-nav-right">
-                <span class="tp-live-status" title="Articles saved in your local feed"><i></i><span class="tp-live-label">{{ stats.today if stats else 0 }} new today</span></span>
+            <div class="sn-nav-right">
+                <span class="sn-live-dot">{{ stats.today if stats else 0 }} new</span>
                 <form id="scrapeForm" method="POST" action="{{ url_for('index') }}">
-                    <input type="hidden" name="refresh" value="true">
-                    <input type="hidden" name="pages" value="2">
-                    <button type="submit" class="tp-refresh-btn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                        <span>Refresh</span>
-                    </button>
+                    <input type="hidden" name="refresh" value="true"><input type="hidden" name="pages" value="1">
+                    <button type="submit" class="sn-refresh-btn">Refresh</button>
                 </form>
             </div>
         </div>
     </nav>
 
-    <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite" aria-label="Refreshing articles">
-        <div class="loading-mark" aria-hidden="true"></div>
-        <h2>Refreshing your briefing</h2>
-        <p id="loadingProgress">Checking the latest stories from your sources.</p>
-    </div>
+    <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite"><div class="loading-mark"></div><p id="loadingProgress">Fetching stories…</p></div>
 
-    <main class="tp-main" id="main-content">
-        <section class="tp-briefing" aria-labelledby="briefing-title">
-            <div>
-                <p class="tp-eyebrow">{{ 'Reading list' if showing_saved else 'Your tech briefing' }}</p>
-                <h1 id="briefing-title">
-                    {% if showing_saved %}Saved articles{% elif keyword %}Results for “{{ keyword }}”{% else %}What’s worth your attention{% endif %}
-                </h1>
-                <p class="tp-briefing-copy">
-                    {% if showing_saved %}A quiet place for the stories you want to return to.{% elif total_count %}{{ total_count }} stories, ranked for signal over noise.{% else %}Choose Refresh to collect your first set of stories.{% endif %}
-                </p>
+    <main class="sn-main">
+        <!-- Stats bar — compact, inline -->
+        <div class="sn-stats-bar">
+            <div class="sn-stats-bar-left">
+                <h1>{% if showing_saved %}Saved{% elif keyword %}Results for "{{ keyword }}"{% else %}Briefing{% endif %}</h1>
+                <span class="sn-story-count">{{ total_count }} stories</span>
             </div>
-            <div class="tp-briefing-stats" aria-label="Feed statistics">
-                <div><strong>{{ stats.total if stats else 0 }}</strong><span>in feed</span></div>
-                <div><strong>{{ stats.read if stats else 0 }}</strong><span>read</span></div>
-                <div><strong>{{ stats.saved if stats else 0 }}</strong><span>saved</span></div>
+            <div class="sn-stats-chips">
+                <span class="sn-stat-chip"><strong>{{ stats.total if stats else 0 }}</strong> in feed</span>
+                <span class="sn-stat-chip"><strong>{{ stats.saved if stats else 0 }}</strong> saved</span>
+                <span class="sn-stat-chip"><strong>{{ stats.today if stats else 0 }}</strong> today</span>
             </div>
-        </section>
+        </div>
 
         {% if not showing_saved %}
-        <form class="tp-filter-bar" method="GET" action="{{ url_for('index') }}" aria-label="Filter articles">
+        <form class="sn-filter-bar" method="GET" action="{{ url_for('index') }}">
             <input type="hidden" name="keyword" value="{{ keyword|default('') }}">
             <label>
-                <span>Source</span>
+                <span class="sn-filter-label">Source</span>
                 <select name="source" onchange="this.form.submit()">
-                    <option value="all" {% if source_filter == 'all' %}selected{% endif %}>All sources</option>
-                    <option value="Hacker News" {% if source_filter == 'Hacker News' %}selected{% endif %}>Hacker News</option>
-                    <option value="TechCrunch" {% if source_filter == 'TechCrunch' %}selected{% endif %}>TechCrunch</option>
-                    <option value="Reddit" {% if source_filter == 'Reddit' %}selected{% endif %}>Reddit</option>
-                    <option value="The Verge" {% if source_filter == 'The Verge' %}selected{% endif %}>The Verge</option>
-                    <option value="Ars Technica" {% if source_filter == 'Ars Technica' %}selected{% endif %}>Ars Technica</option>
+                    <option value="all" {% if source_filter=='all' %}selected{% endif %}>All</option>
+                    <option value="Hacker News" {% if source_filter=='Hacker News' %}selected{% endif %}>Hacker News</option>
+                    <option value="TechCrunch" {% if source_filter=='TechCrunch' %}selected{% endif %}>TechCrunch</option>
+                    <option value="Reddit" {% if source_filter=='Reddit' %}selected{% endif %}>Reddit</option>
+                    <option value="The Verge" {% if source_filter=='The Verge' %}selected{% endif %}>The Verge</option>
+                    <option value="Ars Technica" {% if source_filter=='Ars Technica' %}selected{% endif %}>Ars Technica</option>
+                    <option value="GitHub Trending" {% if source_filter=='GitHub Trending' %}selected{% endif %}>GitHub</option>
+                    <option value="arXiv" {% if source_filter=='arXiv' %}selected{% endif %}>arXiv</option>
                 </select>
             </label>
             <label>
-                <span>Topic</span>
+                <span class="sn-filter-label">Topic</span>
                 <select name="category" onchange="this.form.submit()">
-                    <option value="all" {% if category_filter == 'all' %}selected{% endif %}>Every topic</option>
-                    <option value="AI & ML" {% if category_filter == 'AI & ML' %}selected{% endif %}>AI &amp; ML</option>
-                    <option value="Security" {% if category_filter == 'Security' %}selected{% endif %}>Security</option>
-                    <option value="Hardware" {% if category_filter == 'Hardware' %}selected{% endif %}>Hardware</option>
-                    <option value="Software" {% if category_filter == 'Software' %}selected{% endif %}>Software</option>
-                    <option value="Business" {% if category_filter == 'Business' %}selected{% endif %}>Business</option>
-                    <option value="Science" {% if category_filter == 'Science' %}selected{% endif %}>Science</option>
-                    <option value="Gaming" {% if category_filter == 'Gaming' %}selected{% endif %}>Gaming</option>
+                    <option value="all" {% if category_filter=='all' %}selected{% endif %}>All</option>
+                    <option value="AI &amp; ML" {% if category_filter=='AI &amp; ML' %}selected{% endif %}>AI &amp; ML</option>
+                    <option value="Security" {% if category_filter=='Security' %}selected{% endif %}>Security</option>
+                    <option value="Hardware" {% if category_filter=='Hardware' %}selected{% endif %}>Hardware</option>
+                    <option value="Software" {% if category_filter=='Software' %}selected{% endif %}>Software</option>
+                    <option value="Business" {% if category_filter=='Business' %}selected{% endif %}>Business</option>
+                    <option value="Science" {% if category_filter=='Science' %}selected{% endif %}>Science</option>
+                    <option value="Gaming" {% if category_filter=='Gaming' %}selected{% endif %}>Gaming</option>
                 </select>
             </label>
             <label>
-                <span>Order</span>
+                <span class="sn-filter-label">Order</span>
                 <select name="sort" onchange="this.form.submit()">
-                    <option value="score" {% if sort_by == 'score' %}selected{% endif %}>Top rated</option>
-                    <option value="newest" {% if sort_by == 'newest' %}selected{% endif %}>Newest first</option>
-                    <option value="comments" {% if sort_by == 'comments' %}selected{% endif %}>Most discussed</option>
+                    <option value="score" {% if sort_by=='score' %}selected{% endif %}>Top rated</option>
+                    <option value="newest" {% if sort_by=='newest' %}selected{% endif %}>Newest</option>
+                    <option value="comments" {% if sort_by=='comments' %}selected{% endif %}>Most discussed</option>
                 </select>
             </label>
-            {% if keyword or source_filter != 'all' or category_filter != 'all' or sort_by != 'score' %}
-            <a class="tp-clear-filters" href="{{ url_for('index') }}">Clear filters</a>
+            {% if keyword or source_filter!='all' or category_filter!='all' or sort_by!='score' %}
+            <a class="sn-clear-filters" href="{{ url_for('index') }}">Clear filters</a>
             {% endif %}
         </form>
         {% endif %}
 
         {% if articles %}
-        <div class="tp-grid">
-            {% for article in articles %}
-            <article class="tp-card {% if loop.first and not showing_saved %}tp-card--featured{% endif %} {% if article.is_read %}is-read{% endif %}"
-                     id="article-{{ article.id }}"
-                     style="--src: {% if article.source == 'Hacker News' %}#ff6600{% elif article.source == 'TechCrunch' %}#0cbc87{% elif article.source == 'Reddit' %}#ff4500{% elif article.source == 'The Verge' %}#e01e5a{% elif article.source == 'Ars Technica' %}#00b4d8{% else %}#52525b{% endif %}"
-                     data-article-id="{{ article.id }}">
-                <div class="tp-card-image">
-                    <img class="tp-card-photo"
-                         src="{{ article.image_url or article_fallback_image(article.source) }}"
-                         alt=""
-                         loading="lazy"
-                         referrerpolicy="no-referrer">
-                    <div class="tp-card-image-pattern" aria-hidden="true"></div>
-                    <span class="tp-source-pill">{{ article.source }}</span>
-                    <span class="tp-time-badge">{{ article.time|default('Recently') }}</span>
+        <!-- Featured hero — first article -->
+        {% if not showing_saved and articles|length > 0 %}
+        {% set feat = articles[0] %}
+        {% set fb = article_fallback_data(feat.source, feat.title, feat.link) %}
+        <article class="sn-featured" data-article-id="{{ feat.id }}">
+            <div class="sn-featured-media">
+                {% if feat.image_url %}
+                <img src="{{ feat.image_url }}" alt="" loading="eager" decoding="async" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+                <div class="sn-letter-box" style="display:none"><div class="sn-letter-initials" style="background:{{ fb.color }}">{{ fb.initials }}</div></div>
+                {% else %}
+                <div class="sn-letter-box"><div class="sn-letter-initials" style="background:{{ fb.color }}">{{ fb.initials }}</div><div class="sn-letter-title">{{ feat.title[:80] }}</div></div>
+                {% endif %}
+                <span class="sn-source-dot" data-src="{{ feat.source }}">{{ feat.source }}</span>
+                <span class="sn-time-stamp">{{ feat.time|humanize_time }}</span>
+            </div>
+            <div class="sn-featured-body">
+                <div class="sn-featured-kicker">{{ feat.category if feat.category and feat.category!='General' else feat.source }} · {{ feat.read_time or 3 }} min</div>
+                <h2 class="sn-featured-title"><a href="{{ feat.link }}" target="_blank" rel="noopener">{{ feat.title }}</a></h2>
+                {% if feat.dek %}<p class="sn-featured-dek">{{ feat.dek }}</p>{% elif feat.excerpt %}<p class="sn-featured-dek">{{ feat.excerpt }}</p>{% endif %}
+                <div class="sn-featured-meta">
+                    <span>{{ feat.author|default(feat.source) }}</span>
+                    <span>{{ feat.score|default(0) }} pts</span>
+                    <span>{{ feat.comments|default(0) }} comments</span>
                 </div>
-                <div class="tp-card-body">
-                    <div class="tp-card-tags">
-                        {% if article.category and article.category|lower != 'general' %}<span>{{ article.category }}</span>{% endif %}
-                        {% if article.read_time %}<span>{{ article.read_time }} min read</span>{% endif %}
+                <div class="sn-featured-actions">
+                    <button class="sn-btn-primary" data-action="summary" data-url="{{ feat.link }}" data-title="{{ feat.title }}">Quick read</button>
+                    <button class="sn-btn-ghost" data-action="bookmark" aria-pressed="{{ 'true' if feat.is_saved else 'false' }}">{{ 'Saved' if feat.is_saved else 'Save' }}</button>
+                    <a class="sn-btn-ghost" href="{{ feat.link }}" target="_blank" rel="noopener">Open →</a>
+                </div>
+            </div>
+        </article>
+        {% endif %}
+
+        <!-- Story rows — compact, scannable -->
+        <div class="sn-grid">
+            {% for article in (articles[1:] if not showing_saved and articles|length > 0 else articles) %}
+            <article class="sn-row {% if article.is_read %}is-read{% endif %}" id="article-{{ article.id }}" data-article-id="{{ article.id }}">
+                <div class="sn-row-main">
+                    <div class="sn-row-top">
+                        {% if article.category and article.category!='General' %}<span class="sn-row-category">{{ article.category }}</span>{% endif %}
+                        <span class="sn-row-readtime">{{ article.read_time or 3 }} min</span>
                     </div>
-                    <h2 class="tp-card-title"><a href="{{ article.link }}" target="_blank" rel="noopener noreferrer">{{ article.title }}</a></h2>
-                    {% if article.excerpt %}<p class="tp-card-excerpt">{{ article.excerpt }}</p>{% endif %}
-                    <div class="tp-card-footer">
-                        <div class="tp-card-author">
-                            <img src="https://ui-avatars.com/api/?name={{ article.source|urlencode }}&background=111827&color=fff&size=24" alt="" class="tp-author-avatar">
-                            <span class="tp-author-name">{{ article.author|default(article.source) }}</span>
-                        </div>
-                        <div class="tp-card-stats" aria-label="Article engagement">
-                            <span class="tp-stat" title="Score"><svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12" aria-hidden="true"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>{{ article.score|default(0) }}</span>
-                            <span class="tp-stat" title="Comments"><svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{{ article.comments|default(0) }}</span>
-                        </div>
+                    <h2 class="sn-row-title"><a href="{{ article.link }}" target="_blank" rel="noopener">{{ article.title }}</a></h2>
+                    {% if article.dek %}<p class="sn-row-excerpt">{{ article.dek }}</p>{% elif article.excerpt %}<p class="sn-row-excerpt">{{ article.excerpt }}</p>{% endif %}
+                    <div class="sn-row-footer">
+                        <span class="sn-source-dot" data-src="{{ article.source }}">{{ article.source }}</span>
+                        <span class="sn-stat">{{ article.score|default(0) }} pts</span>
+                        <span class="sn-stat">{{ article.comments|default(0) }} cmt</span>
+                        <span class="sn-stat">{{ article.author|default('') }}</span>
                     </div>
-                    <div class="tp-card-actions" aria-label="Article actions">
-                        <button type="button" class="tp-article-action {% if article.is_saved %}is-active{% endif %}" data-action="bookmark" aria-pressed="{{ 'true' if article.is_saved else 'false' }}" title="{{ 'Remove from saved' if article.is_saved else 'Save article' }}">
-                            <svg viewBox="0 0 24 24" fill="{{ 'currentColor' if article.is_saved else 'none' }}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span class="sr-only">Save article</span>
+                </div>
+                <div class="sn-row-side">
+                    <span class="sn-time-stamp">{{ article.time|humanize_time }}</span>
+                    <div class="sn-row-actions">
+                        <button type="button" class="sn-action {% if article.is_saved %}is-active{% endif %}" data-action="bookmark" aria-pressed="{{ 'true' if article.is_saved else 'false' }}" title="Save">
+                            <svg viewBox="0 0 24 24" fill="{{ 'currentColor' if article.is_saved else 'none' }}" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
                         </button>
-                        <button type="button" class="tp-article-action {% if article.is_read %}is-active{% endif %}" data-action="read" aria-pressed="{{ 'true' if article.is_read else 'false' }}" title="{{ 'Mark unread' if article.is_read else 'Mark read' }}">
-                            <svg viewBox="0 0 24 24" fill="{{ 'currentColor' if article.is_read else 'none' }}" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span class="sr-only">Mark as read</span>
+                        <button type="button" class="sn-action {% if article.is_read %}is-active{% endif %}" data-action="read" aria-pressed="{{ 'true' if article.is_read else 'false' }}" title="Mark read">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12l5 5L20 7"/></svg>
                         </button>
-                        <button type="button" class="tp-article-action" data-action="summary" data-url="{{ article.link }}" title="Summarize article">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m12 3-1.9 5.1L5 10l5.1 1.9L12 17l1.9-5.1L19 10l-5.1-1.9L12 3Z"/><path d="m19 15-.8 2.2L16 18l2.2.8L19 21l.8-2.2L22 18l-2.2-.8L19 15Z"/></svg><span class="sr-only">Summarize article</span>
+                        <button type="button" class="sn-action" data-action="summary" data-url="{{ article.link }}" data-title="{{ article.title }}" title="Quick read">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 17l-1.5-4.5L6 9l4.5-1.5L12 3z"/></svg>
                         </button>
+                        <a href="{{ article.link }}" target="_blank" rel="noopener" class="sn-action" title="Open">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                        </a>
                     </div>
                 </div>
             </article>
@@ -172,39 +175,38 @@
         </div>
 
         {% if total_pages|default(1) > page|default(1) %}
-        <div class="tp-load-more">
-            {% if showing_saved %}
-            <a class="tp-load-btn" href="{{ url_for('saved_articles', page=page + 1, sort=sort_by) }}">Next saved articles <span aria-hidden="true">→</span></a>
-            {% else %}
-            <a class="tp-load-btn" href="{{ url_for('index', page=page + 1, sort=sort_by, source=source_filter, keyword=keyword, category=category_filter) }}">Show more stories <span aria-hidden="true">→</span></a>
-            {% endif %}
+        <div class="sn-load-more">
+            <a class="sn-load-btn" href="{{ url_for('index', page=page+1, sort=sort_by, source=source_filter, keyword=keyword, category=category_filter) if not showing_saved else url_for('saved_articles', page=page+1, sort=sort_by) }}">Show more stories →</a>
         </div>
         {% endif %}
         {% else %}
-        <section class="tp-empty" aria-labelledby="empty-title">
-            <div class="tp-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg></div>
-            <p class="tp-eyebrow">Nothing here yet</p>
-            <h2 id="empty-title">{% if keyword %}No stories match that search{% elif showing_saved %}Your reading list is empty{% else %}Your briefing is ready when you are{% endif %}</h2>
-            <p>{% if keyword %}Try a broader term or clear your filters.{% elif showing_saved %}Save any story to find it here later.{% else %}Refresh the feed to pull in the latest stories from your sources.{% endif %}</p>
-            {% if not showing_saved and not keyword %}<form id="scrapeForm" method="POST" action="{{ url_for('index') }}"><input type="hidden" name="refresh" value="true"><button type="submit" class="tp-primary-action">Refresh the feed</button></form>{% endif %}
-            {% if keyword %}<a class="tp-clear-filters" href="{{ url_for('index') }}">Clear search</a>{% endif %}
+        <section class="sn-empty">
+            <p class="sn-empty-label">{% if keyword %}No results{% elif showing_saved %}Empty{% else %}No stories{% endif %}</p>
+            <h2>{% if keyword %}Nothing for "{{ keyword }}"{% elif showing_saved %}No saved stories yet{% else %}Your feed is empty{% endif %}</h2>
+            <p>{% if keyword %}Try a different search term.{% elif showing_saved %}Save stories from the feed to find them here.{% else %}Hit Refresh to pull the latest stories.{% endif %}</p>
+            {% if not showing_saved and not keyword %}
+            <form method="POST" action="{{ url_for('index') }}">
+                <input type="hidden" name="refresh" value="true">
+                <button class="sn-btn-primary">Refresh feed</button>
+            </form>
+            {% endif %}
         </section>
         {% endif %}
     </main>
 
-    <div class="modal-overlay" id="summaryModal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle" aria-hidden="true">
-        <div class="modal" role="document">
-            <header class="modal-header">
-                <div><p class="tp-eyebrow">Quick read</p><h2 id="summaryTitle">Article summary</h2></div>
-                <button type="button" class="modal-close" data-modal-close aria-label="Close summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-            </header>
-            <div class="modal-body" id="summaryBody"></div>
-            <footer class="modal-footer"><a href="#" id="summaryReadLink" target="_blank" rel="noopener" class="btn-secondary" hidden>Read the full article <span aria-hidden="true">→</span></a></footer>
+    <!-- Drawer — slide-over panel -->
+    <div class="sn-drawer-overlay" id="drawerOverlay" aria-hidden="true"></div>
+    <aside class="sn-drawer" id="summaryDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true">
+        <div class="sn-drawer-head">
+            <div><p class="sn-eyebrow">Quick read</p><h2 id="drawerTitle">Loading…</h2><p class="sn-drawer-meta" id="drawerMeta"></p></div>
+            <button class="modal-close" data-drawer-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
-    </div>
+        <div class="sn-drawer-body" id="drawerBody"></div>
+        <div class="sn-drawer-foot"><a id="drawerLink" href="#" target="_blank" rel="noopener" class="sn-btn-primary" hidden>Read full article →</a><button class="sn-btn-ghost" data-drawer-close>Close</button></div>
+    </aside>
 
-    <div class="toast-container" id="toastContainer" aria-live="polite" aria-atomic="true"></div>
-    <button class="scroll-top" id="scrollTop" type="button" aria-label="Scroll to top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
+    <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+    <button class="scroll-top" id="scrollTop" aria-label="Back to top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg></button>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

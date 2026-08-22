@@ -25,6 +25,7 @@ from flask import (Flask, render_template, request, Response,
 from flask.typing import ResponseReturnValue
 from web_scraper import NewsAggregator
 from database import Database
+from pipeline.enrich import enrich_batch as _enrich_batch
 import nltk
 
 # Security extensions
@@ -72,24 +73,106 @@ def ensure_nltk_data():
         except LookupError:
             nltk.download(resource.split('/')[-1], quiet=True)
 
-# Call once at startup (after imports, before routes)
-ensure_nltk_data()
-
 app = Flask(__name__)
+
+# Defer NLTK download — call lazily on first sentiment/stopwords use
+# ponytail: avoids blocking startup / network fail on import; will download on demand
+_nltk_ensured = False
+
+def _ensure_nltk_once():
+    global _nltk_ensured
+    if _nltk_ensured:
+        return
+    try:
+        ensure_nltk_data()
+    except Exception as e:
+        logger.warning(f"NLTK data ensure failed: {e}")
+    _nltk_ensured = True
+
+
+def _humanize_time(value: str) -> str:
+    """Humanize ISO/relative time string for display (no AI slop raw ISO)."""
+    if not value or value.strip().lower() in ("recent", "recently", "today", "unknown"):
+        return value.strip() if value else "Today"
+    # Try ISO parse
+    try:
+        from datetime import datetime, timezone
+        s = value.strip()
+        # Handle '2026-08-22T08:36:47Z' etc
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = None
+        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%a, %d %b %Y %H:%M:%S %z", "%Y-%m-%d %H:%M:%S"):
+            try:
+                dt = datetime.strptime(s[:25], fmt) if "%z" in fmt else datetime.strptime(s[:19], fmt)
+                if dt:
+                    break
+            except Exception:
+                continue
+        if dt is None:
+            # fromisoformat fallback
+            dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = now - dt
+        secs = int(delta.total_seconds())
+        if secs < 0:
+            return "Today"
+        if secs < 60:
+            return "now"
+        if secs < 3600:
+            return f"{secs//60}m ago"
+        if secs < 86400:
+            return f"{secs//3600}h ago"
+        if secs < 604800:
+            return f"{secs//86400}d ago"
+        return dt.strftime("%b %d")
+    except Exception:
+        # contains relative like "5 hours ago" — keep short
+        v = value.strip()
+        # shorten verbose
+        if "hour" in v.lower():
+            try:
+                n = int("".join(c for c in v if c.isdigit()) or "1")
+                return f"{n}h ago"
+            except:
+                pass
+        return value[:16]
+
+
+@app.template_filter("humanize_time")
+def humanize_time_filter(value):
+    return _humanize_time(str(value) if value is not None else "")
 
 
 @app.context_processor
 def inject_article_image_helpers():
-    """Provide a reliable photo for articles whose feed has no thumbnail."""
-    fallback_images = {
-        'Hacker News': 'https://images.unsplash.com/photo-1516116216624-53e697fedbea?auto=format&fit=crop&w=1000&q=80',
-        'TechCrunch': 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1000&q=80',
-        'Reddit': 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1000&q=80',
-        'The Verge': 'https://images.unsplash.com/photo-1516321165247-4aa89a48be83?auto=format&fit=crop&w=1000&q=80',
-        'Ars Technica': 'https://images.unsplash.com/photo-1531297484001-80022131f5a1?auto=format&fit=crop&w=1000&q=80',
+    """Letter-box fallback — no generic Unsplash, no duplication."""
+    # ponytail: deterministic letter, no external photo
+    source_meta = {
+        'Hacker News': {'initials': 'HN', 'color': '#FF6600'},
+        'TechCrunch': {'initials': 'TC', 'color': '#0A9E74'},
+        'Reddit': {'initials': 'RE', 'color': '#FF4500'},
+        'The Verge': {'initials': 'VG', 'color': '#E01E5A'},
+        'Ars Technica': {'initials': 'AT', 'color': '#0086A8'},
+        'GitHub Trending': {'initials': 'GH', 'color': '#24292E'},
+        'arXiv': {'initials': 'AX', 'color': '#B31B1B'},
     }
-    default_image = 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?auto=format&fit=crop&w=1000&q=80'
-    return {'article_fallback_image': lambda source: fallback_images.get(source, default_image)}
+    def fallback_data(source: str, title: str = "", link: str = ""):
+        m = source_meta.get(source, {'initials': (source[:2] if source else 'SN').upper(), 'color': '#3F3F46'})
+        return m
+
+    # keep legacy helper for compat — now returns letter-box not Unsplash
+    def fallback_image(source: str, title: str = "", link: str = ""):
+        # reuse letter-box as image fallback will be rendered as div, not <img>
+        return ""
+
+    return {
+        'article_fallback_data': fallback_data,
+        'article_fallback_image': lambda source, title="", link="": fallback_image(source, title, link),
+        'humanize_time': _humanize_time,
+    }
 
 # ──────────────────────────────────────────────
 # Security Hardening
@@ -108,14 +191,19 @@ app.config['MAX_FORM_MEMORY_SIZE'] = 500 * 1024     # 500 KB
 app.config['MAX_FORM_PARTS'] = 100
 
 # Secret key & rotation (Flask 3.1+)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', os.urandom(32).hex())
+_secret = os.getenv('SECRET_KEY')
+if not _secret:
+    logger.warning("SECRET_KEY not set — using ephemeral key (sessions will reset on restart)")
+    _secret = os.urandom(32).hex()
+app.config['SECRET_KEY'] = _secret
 fallbacks = os.getenv('SECRET_KEY_FALLBACKS', '')
 if fallbacks:
     app.config['SECRET_KEY_FALLBACKS'] = [k.strip() for k in fallbacks.split(',') if k.strip()]
 
 # Session cookie hardening (even though no auth, defense in depth)
+_is_secure_env = bool(os.getenv('RENDER') or os.getenv('DATABASE_URL') or os.getenv('FLASK_ENV') == 'production')
 app.config.update(
-    SESSION_COOKIE_SECURE=True,           # HTTPS only
+    SESSION_COOKIE_SECURE=_is_secure_env,  # only force HTTPS in production
     SESSION_COOKIE_HTTPONLY=True,         # No JS access
     SESSION_COOKIE_SAMESITE='Lax',        # CSRF mitigation
 )
@@ -140,7 +228,7 @@ if _talisman_available:
         strict_transport_security=True,
         strict_transport_security_max_age=31536000,
         strict_transport_security_include_subdomains=True,
-        frame_options='SAMEORIGIN',
+        frame_options=None,  # use CSP frame-ancestors only (avoids conflict)
         x_content_type_options='nosniff',
         referrer_policy='strict-origin-when-cross-origin',
         permissions_policy={
@@ -162,8 +250,6 @@ if _limiter_available:
         storage_uri=storage_uri,
         strategy="fixed-window",
     )
-    # Stricter limits on mutation endpoints
-    limiter.limit("30 per minute")(lambda: None)  # placeholder, applied via decorators below
 else:
     limiter = None
     logger.warning("Flask-Limiter not available. Rate limiting disabled.")
@@ -185,11 +271,99 @@ db = Database()
 # ──────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────
+# Singleton aggregator so CACHE_TTL and health tracking actually work
+_aggregator_instance: Optional[NewsAggregator] = None
 
 def get_aggregator() -> NewsAggregator:
-    """Create a fresh NewsAggregator instance (not shared across requests/workers)."""
-    from web_scraper import NewsAggregator
-    return NewsAggregator()
+    """Return shared NewsAggregator (per-process singleton)."""
+    global _aggregator_instance
+    if _aggregator_instance is None:
+        from web_scraper import NewsAggregator
+        _aggregator_instance = NewsAggregator()
+    return _aggregator_instance
+
+# Stats cache (60s TTL) — avoids 7 COUNT(*) per page load
+_stats_cache: dict = {'data': None, 'ts': 0.0}
+_STATS_TTL = 60
+
+def _get_gold_stats():
+    """Try to serve stats from Gold layer (Parquet via DuckDB) — ponytail: falls back to DB."""
+    try:
+        from pathlib import Path
+        import json as _json
+        from datetime import datetime, timezone
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        gold_json = Path(f"data/gold/{day}/daily_stats.json")
+        # legacy slash fallback
+        if not gold_json.exists():
+            alt = Path(f"data/gold/{day.replace('-', '/')}/daily_stats.json")
+            if alt.exists():
+                gold_json = alt
+                day = day.replace("-", "/")
+        if gold_json.exists():
+            data = _json.loads(gold_json.read_text(encoding="utf-8"))
+            # normalize to DB shape for template
+            return {
+                "total": data.get("total", 0),
+                "today": data.get("total", 0),
+                "saved": 0,  # gold doesn't track bookmarks
+                "read": 0,
+                "by_source": data.get("by_source", {}),
+                "by_category": data.get("by_category", {}),
+                "by_sentiment": {},
+            }
+        # Try DuckDB on Parquet (if gold was written as parquet)
+        try:
+            import duckdb
+            gold_parquet = Path("data/gold")
+            if gold_parquet.exists() and any(gold_parquet.rglob("*.parquet")):
+                # query latest gold
+                con = duckdb.connect()
+                # ponytail: DuckDB reads hive-partitioned parquet directly
+                q = con.execute("SELECT source, count(*) as c FROM read_parquet('data/gold/**/*.parquet', hive_partitioning=1) GROUP BY source").fetchall()
+                by_source = {r[0]: r[1] for r in q}
+                con.close()
+                if by_source:
+                    total = sum(by_source.values())
+                    return {"total": total, "today": total, "saved": 0, "read": 0, "by_source": by_source, "by_category": {}, "by_sentiment": {}}
+        except Exception:
+            pass
+        # Try HF Dataset pull (if HF_DATASET env set)
+        hf_dataset = os.getenv("HF_DATASET", "").strip()
+        if hf_dataset:
+            try:
+                from huggingface_hub import hf_hub_download
+                # download daily_stats.json from dataset repo
+                p = hf_hub_download(repo_id=hf_dataset, filename=f"{day}/daily_stats.json", repo_type="dataset")
+                data = _json.loads(Path(p).read_text(encoding="utf-8"))
+                return {
+                    "total": data.get("total", 0),
+                    "today": data.get("total", 0),
+                    "saved": 0,
+                    "read": 0,
+                    "by_source": data.get("by_source", {}),
+                    "by_category": data.get("by_category", {}),
+                    "by_sentiment": {},
+                }
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+
+def get_cached_stats():
+    # Prefer Gold if available (shows lakehouse), else DB
+    gold = _get_gold_stats()
+    if gold is not None:
+        return gold
+    now = time.time()
+    if _stats_cache['data'] is not None and (now - _stats_cache['ts']) < _STATS_TTL:
+        return _stats_cache['data']
+    data = db.get_stats()
+    _stats_cache['data'] = data
+    _stats_cache['ts'] = now
+    return data
 
 MAX_SCRAPE_PAGES = 5
 MAX_PAGE_NUMBER = 1000
@@ -197,7 +371,7 @@ MAX_KEYWORD_LENGTH = 120
 MAX_SEARCH_QUERY_LENGTH = 100
 
 ALLOWED_SORT_OPTIONS = {'score', 'comments', 'newest'}
-ALLOWED_SOURCE_FILTERS = {'all', 'Hacker News', 'TechCrunch', 'Reddit', 'The Verge', 'Ars Technica'}
+ALLOWED_SOURCE_FILTERS = {'all', 'Hacker News', 'TechCrunch', 'Reddit', 'The Verge', 'Ars Technica', 'GitHub Trending', 'arXiv'}
 
 KEYWORD_REGEX = re.compile(r"^[\w\s\-\.\+#&',:()]*$")
 
@@ -379,11 +553,24 @@ def normalize_category_filter(category: str) -> str:
 
 
 def classify_article(title: str) -> str:
-    """Classifies an article into a category based on keyword matching."""
+    """Classifies an article into a category based on keyword matching (word-boundary aware)."""
     title_lower = title.lower()
+    # Extract words for boundary-aware matching of short terms like 'ai', 'game', 'chip'
+    words = set(re.findall(r'[a-z0-9]+', title_lower))
+    title_filtered = f' {title_lower} '
     scores = {}
     for category, keywords in CATEGORY_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in title_lower)
+        score = 0
+        for kw in keywords:
+            if ' ' in kw:
+                if kw in title_lower:
+                    score += 1
+            elif len(kw) <= 3:
+                if kw in words:
+                    score += 1
+            else:
+                if kw in title_lower:
+                    score += 1
         if score > 0:
             scores[category] = score
 
@@ -392,29 +579,46 @@ def classify_article(title: str) -> str:
     return 'General'
 
 
-def estimate_read_time(title: str) -> int:
-    """Estimates read time in minutes based on typical article length.
-    Uses word count as a rough proxy — typical tech article = 3-8 min."""
-    word_count = len(title.split())
-    # Rough heuristic: longer titles usually mean more in-depth articles
-    if word_count > 15:
+def estimate_read_time(title: str, excerpt: str = '') -> int:
+    """Estimates read time from excerpt length when available, else title.
+    ponytail: simple word-count proxy; upgrade to real content length when full body stored."""
+    text = excerpt.strip() if excerpt and excerpt.strip() else title
+    word_count = len(text.split())
+    # avg 200 wpm, tech article 400-800 words => 2-4 min plus overhead
+    if word_count > 80:
         return 7
-    elif word_count > 10:
+    elif word_count > 40:
         return 5
+    elif word_count > 20:
+        return 4
     return 3
 
 
 # ──────────────────────────────────────────────
-# Sentiment Analysis
+# Sentiment Analysis (cached singleton)
 # ──────────────────────────────────────────────
+
+_sia = None
+
+def _get_sia():
+    global _sia
+    if not _vader_available:
+        return None
+    if _sia is None:
+        _ensure_nltk_once()
+        try:
+            _sia = SentimentIntensityAnalyzer()
+        except Exception:
+            return None
+    return _sia
 
 def analyze_sentiment(title: str) -> dict:
     """Uses VADER to analyze sentiment of a title."""
-    if not _vader_available:
+    sia = _get_sia()
+    if sia is None:
         return {'label': 'neutral', 'score': 0.0}
 
     try:
-        sia = SentimentIntensityAnalyzer()
         scores = sia.polarity_scores(title)
         compound = scores['compound']
 
@@ -434,72 +638,90 @@ def analyze_sentiment(title: str) -> dict:
 # Trending Topics (TF-IDF-like word frequency)
 # ──────────────────────────────────────────────
 
-STOP_WORDS = set()
-try:
-    from nltk.corpus import stopwords
-    STOP_WORDS = set(stopwords.words('english'))
-except LookupError:
-    pass
+STOP_WORDS: Optional[set] = None
 
-# Additional stop words for tech news
-STOP_WORDS.update({
-    'new', 'says', 'first', 'get', 'one', 'two', 'could', 'would', 'also',
-    'may', 'use', 'using', 'make', 'like', 'much', 'us', 'now', 'just',
-    'want', 'still', 'year', 'years', 'going', 'big', 'best', 'way',
-    '—', '–', '-', "'s", "n't", 'the', 'a', 'an', 'is', 'are', 'was',
-    'will', 'can', 'has', 'its', 'it', 'how', 'why', 'what'
-})
+def _get_stop_words() -> set:
+    global STOP_WORDS
+    if STOP_WORDS is not None:
+        return STOP_WORDS
+    _ensure_nltk_once()
+    try:
+        from nltk.corpus import stopwords
+        base = set(stopwords.words('english'))
+    except LookupError:
+        base = set()
+    base.update({
+        'new', 'says', 'first', 'get', 'one', 'two', 'could', 'would', 'also',
+        'may', 'use', 'using', 'make', 'like', 'much', 'now', 'just',
+        'want', 'still', 'year', 'years', 'going', 'big', 'best', 'way',
+    })
+    STOP_WORDS = base
+    return STOP_WORDS
 
 
 def extract_trending_topics(titles: list[str], limit: int = 10) -> list[dict]:
     """Extracts trending topics from article titles using word frequency."""
-    word_counts: Counter = Counter()
+    # ponytail: single-pass, keep unigrams and bigrams separate so neither starves the other
+    stop_words = _get_stop_words()
+    uni_counts: Counter = Counter()
+    bi_counts: Counter = Counter()
 
     for title in titles:
         words = re.findall(r'[a-zA-Z]{3,}', title.lower())
-        meaningful = [w for w in words if w not in STOP_WORDS and len(w) > 2]
-        word_counts.update(meaningful)
-
-    # Also extract 2-word phrases (bigrams) for better topics
-    for title in titles:
-        words = re.findall(r'[a-zA-Z]{3,}', title.lower())
-        meaningful = [w for w in words if w not in STOP_WORDS]
+        meaningful = [w for w in words if w not in stop_words and len(w) > 2]
+        uni_counts.update(meaningful)
         for i in range(len(meaningful) - 1):
             bigram = f"{meaningful[i]} {meaningful[i + 1]}"
-            word_counts[bigram] += 1
+            bi_counts[bigram] += 1
 
     topics = []
-    for word, count in word_counts.most_common(limit):
-        if count >= 2:  # Only show if appears 2+ times
-            topics.append({'topic': word, 'count': count})
-
-    return topics
+    for word, count in uni_counts.most_common(limit):
+        if count >= 2:
+            topics.append({'topic': word, 'count': count, 'kind': 'word'})
+    # Add top bigrams interleaved, still respecting limit
+    for phrase, count in bi_counts.most_common(limit):
+        if count >= 2 and len(topics) < limit and phrase not in {t['topic'] for t in topics}:
+            topics.append({'topic': phrase, 'count': count, 'kind': 'phrase'})
+    # Sort by count desc and trim
+    topics.sort(key=lambda x: x['count'], reverse=True)
+    for t in topics:
+        t.pop('kind', None)
+    return topics[:limit]
 
 
 # ──────────────────────────────────────────────
 # Background Processing
 # ──────────────────────────────────────────────
 
-def process_articles_metadata():
+def process_articles_metadata(batch_size: int = 100):
     """Background job: assigns sentiment, category, and read time to unprocessed articles."""
-    unprocessed = db.get_unprocessed_articles(limit=100)
-    processed_at = time.time()
-    for article in unprocessed:
-        title = article.get('title', '')
-        sentiment = analyze_sentiment(title)
-        category = classify_article(title)
-        read_time = estimate_read_time(title)
+    total = 0
+    while True:
+        unprocessed = db.get_unprocessed_articles(limit=batch_size)
+        if not unprocessed:
+            break
+        processed_at = time.time()
+        for article in unprocessed:
+            title = article.get('title', '')
+            excerpt = article.get('excerpt', '')
+            sentiment = analyze_sentiment(title)
+            category = classify_article(title)
+            read_time = estimate_read_time(title, excerpt)
 
-        db.update_article_metadata(
-            article_id=article['id'],
-            sentiment=sentiment['label'],
-            sentiment_score=sentiment['score'],
-            category=category,
-            read_time=read_time,
-            metadata_processed_at=processed_at
-        )
-    if unprocessed:
-        logger.info(f"Processed metadata for {len(unprocessed)} articles")
+            db.update_article_metadata(
+                article_id=article['id'],
+                sentiment=sentiment['label'],
+                sentiment_score=sentiment['score'],
+                category=category,
+                read_time=read_time,
+                metadata_processed_at=processed_at
+            )
+        total += len(unprocessed)
+        logger.info(f"Processed metadata for {len(unprocessed)} articles ({total} total this run)")
+        if len(unprocessed) < batch_size:
+            break
+    if total:
+        logger.info(f"Finished metadata processing: {total} articles")
 
 
 def background_scrape():
@@ -510,11 +732,16 @@ def background_scrape():
         agg.scrape_all(hn_pages=1, force=True)
         new_articles = agg.get_articles()
         if new_articles:
+            try:
+                new_articles = _enrich_batch(new_articles, fetch=False)
+            except Exception as e:
+                logger.warning(f"Enrich failed: {e}")
             db.add_articles(new_articles)
             db.upsert_images(new_articles)
             logger.info(f"[Scheduler] Added {len(new_articles)} articles")
             # Process metadata for new articles
             process_articles_metadata()
+            _stats_cache['data'] = None
     except Exception as e:
         logger.error(f"[Scheduler] Scrape failed: {e}")
 
@@ -563,7 +790,7 @@ def saved_articles():
     articles = db.get_articles(limit=per_page, offset=offset, saved_only=True, sort_by=sort_by)
     total = db.get_total_count(saved_only=True)
     total_pages = max(1, (total + per_page - 1) // per_page)
-    stats = db.get_stats()
+    stats = get_cached_stats()
 
     return render_template('index.html',
                            articles=articles,
@@ -602,10 +829,15 @@ def index():
                 agg = get_aggregator()
                 agg.scrape_all(hn_pages=pages, force=force_refresh)
                 new_articles = agg.get_articles()
+                try:
+                    new_articles = _enrich_batch(new_articles, fetch=False)
+                except Exception as e:
+                    logger.warning(f"Enrich failed: {e}")
                 db.add_articles(new_articles)
                 db.upsert_images(new_articles)
                 # Process metadata for new articles
                 process_articles_metadata()
+                _stats_cache['data'] = None
             else:
                 logger.info("Querying existing data...")
 
@@ -624,7 +856,7 @@ def index():
     total_pages = max(1, (total + per_page - 1) // per_page)
 
     # Get stats
-    stats = db.get_stats()
+    stats = get_cached_stats()
 
     # Source health
     health = get_aggregator().get_health()
@@ -672,7 +904,7 @@ def bookmark() -> ResponseReturnValue:
     new_status = db.toggle_bookmark(article_id)
     if new_status is None:
         return jsonify({'error': 'Article not found'}), 404
-
+    _stats_cache['data'] = None
     return jsonify({'status': 'saved' if new_status else 'removed'})
 
 
@@ -691,7 +923,7 @@ def toggle_read() -> ResponseReturnValue:
     new_status = db.toggle_read(article_id)
     if new_status is None:
         return jsonify({'error': 'Article not found'}), 404
-
+    _stats_cache['data'] = None
     return jsonify({'status': 'read' if new_status else 'unread'})
 
 
@@ -714,7 +946,7 @@ def subscribe() -> ResponseReturnValue:
 @app.route('/api/stats')
 def api_stats() -> ResponseReturnValue:
     """API endpoint for dashboard statistics."""
-    stats = db.get_stats()
+    stats = get_cached_stats()
     return jsonify(stats)
 
 
@@ -766,37 +998,80 @@ def summarize() -> ResponseReturnValue:
 
     try:
         import trafilatura
-        downloaded = trafilatura.fetch_url(url, timeout=10)
+        import requests as _req
+        # Fetch via requests so SSRF redirect chain can be validated
+        try:
+            resp = _req.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True)
+            if resp.status_code != 200:
+                return jsonify({'error': 'Failed to fetch URL'}), 500
+            # Validate final URL after redirects
+            if not is_safe_url(resp.url):
+                return jsonify({'error': 'URL not allowed after redirect'}), 400
+            downloaded = resp.text
+        except Exception:
+            # Fallback to trafilatura's fetcher
+            downloaded = trafilatura.fetch_url(url, timeout=10)
         if not downloaded:
             return jsonify({'error': 'Failed to fetch URL'}), 500
 
-        # Extract main content
-        result = trafilatura.extract(
-            downloaded,
-            include_comments=False,
-            include_tables=False,
-            include_images=False,
-            output_format='json',
-            with_metadata=True
-        )
-        
-        if result:
-            import json
-            data = json.loads(result)
-            title = data.get('title', '')
-            summary = data.get('excerpt', data.get('raw_text', ''))[:500]
-            image = data.get('image', '')
-        else:
-            # Fallback: extract text only
-            text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
-            title = ''
-            summary = text[:500] if text else 'Could not extract content'
-            image = ''
+        # Extract main content — use bare_extraction for metadata
+        title = ""
+        image = ""
+        full_text = ""
+        try:
+            bare = trafilatura.bare_extraction(downloaded, with_metadata=True, favor_recall=False)
+            if bare and getattr(bare, "text", None):
+                full_text = bare.text or ""
+                title = getattr(bare, "title", "") or ""
+                image = getattr(bare, "image", "") or ""
+        except Exception:
+            pass
+
+        if not full_text:
+            # fallback to json extract
+            result = trafilatura.extract(
+                downloaded,
+                include_comments=False,
+                include_tables=False,
+                include_images=False,
+                output_format='json',
+                with_metadata=True
+            )
+            if result:
+                import json
+                data = json.loads(result)
+                title = title or data.get('title', '')
+                full_text = data.get('raw_text', '') or data.get('text', '') or data.get('excerpt', '')
+                image = image or data.get('image', '')
+            else:
+                text = trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+                full_text = text or ""
+
+        if not full_text:
+            return jsonify({'error': 'Could not extract content'}), 500
+
+        # Enrich to dek + bullets (free, offline)
+        from pipeline.enrich import _make_dek, _extractive_bullets
+        dek = _make_dek(full_text, title)
+        bullets = _extractive_bullets(full_text, 3)
+        # ensure not empty
+        if not bullets:
+            # fallback single
+            bullets = [full_text[:220].rsplit(" ",1)[0] + "…"] if len(full_text) > 220 else [full_text[:220]]
+        # read_time
+        words = len(full_text.split())
+        read_time = max(1, round(words / 225))
+        # legacy summary for compat = dek + bullets joined
+        summary = dek + (" " + " ".join(bullets) if bullets else "")
 
         return jsonify({
             'title': title,
-            'summary': summary,
-            'top_image': image
+            'dek': dek,
+            'bullets': bullets,
+            'summary': summary[:800],
+            'top_image': image,
+            'read_time': read_time,
+            'word_count': words,
         })
     except Exception as e:
         logger.warning(f"Failed to summarize {url}: {e}")
@@ -873,11 +1148,15 @@ def send_email_digest() -> ResponseReturnValue:
     if not recipient or not is_valid_email(recipient):
         return jsonify({'error': 'Valid recipient email required'}), 400
 
-    # Build digest content
+    # Build digest content (escape to prevent HTML injection)
+    import html as _html
     articles = db.get_articles(limit=10)
     digest_lines = ["<h2>📰 Your Tech News Digest</h2><ul>"]
     for a in articles:
-        digest_lines.append(f"<li><a href='{a.get('link')}'>{a.get('title')}</a> [{a.get('source')}]</li>")
+        link = _html.escape(a.get('link') or '', quote=True)
+        title = _html.escape(a.get('title') or '')
+        source = _html.escape(a.get('source') or '')
+        digest_lines.append(f"<li><a href='{link}'>{title}</a> [{source}]</li>")
     digest_lines.append("</ul>")
 
     body = '\n'.join(digest_lines)
@@ -960,17 +1239,32 @@ def start_scheduler() -> None:
     logger.info("Background scheduler started (scraping every 15 minutes)")
 
 
-# Initialize scheduler and process metadata on app startup (for both local and production)
-# This runs when app module is imported (e.g., by Gunicorn on PythonAnywhere)
-_is_render = os.getenv('RENDER') is not None  # ponytail: detect Render free tier
-try:
-    process_articles_metadata()
-    if not _is_render:
-        start_scheduler()
-    else:
-        logger.info("Render detected — background scheduler disabled. Use manual Refresh.")
-except Exception as e:
-    logger.error(f"Failed to initialize scheduler or process metadata: {e}")
+def _init_background_tasks():
+    """Lazy init — call explicitly, not at import."""
+    # ponytail: avoid import side-effects, call from create_app or __main__
+    is_render = os.getenv('RENDER') is not None
+    try:
+        process_articles_metadata()
+        if not is_render:
+            start_scheduler()
+        else:
+            logger.info("Render detected — background scheduler disabled. Use manual Refresh.")
+    except Exception as e:
+        logger.error(f"Failed to initialize scheduler or process metadata: {e}")
+
+# Only auto-init when not under test and not imported as library
+if os.getenv('SNIFFER_NO_AUTO_INIT') != '1':
+    # Defer slightly but still allow gunicorn workers to init without blocking import
+    # Use app.before_request would be better; for now init once after first request
+    @app.before_request
+    def _lazy_init_once():
+        # run once
+        if not getattr(app, '_sniffer_inited', False):
+            app._sniffer_inited = True
+            try:
+                _init_background_tasks()
+            except Exception:
+                pass
 
 
 # ──────────────────────────────────────────────
@@ -1012,4 +1306,8 @@ def handle_server_error(e):
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    app.run(debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')
+    port = int(os.environ.get('PORT', 7860))
+    debug = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    logger.info(f"Starting local dev server on port {port} (debug={debug})...")
+    # ponytail: gunicorn is for production (render.yaml / Dockerfile CMD), not os.system from app
+    app.run(host='0.0.0.0', port=port, debug=debug)

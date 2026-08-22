@@ -1,0 +1,48 @@
+# Sniffer sources — RSS / JSON / XML heterogeneous
+# ponytail: config-driven so adding a source is one line, not a code change
+sources:
+  - name: "Hacker News"
+    type: rss
+    url: "https://hnrss.org/frontpage?count=30"
+    enabled: true
+    paginate: false
+
+  - name: "TechCrunch"
+    type: rss
+    url: "https://techcrunch.com/feed/"
+    enabled: true
+    paginate: false
+    limit: 25
+
+  - name: "Reddit"
+    type: json
+    url: "https://www.reddit.com/r/technology/top.json?t=day&limit=25"
+    enabled: true
+    paginate: false
+
+  - name: "The Verge"
+    type: rss
+    url: "https://www.theverge.com/rss/index.xml"
+    enabled: true
+    paginate: false
+    limit: 15
+
+  - name: "Ars Technica"
+    type: rss
+    url: "https://feeds.arstechnica.com/arstechnica/index"
+    enabled: true
+    paginate: false
+    limit: 15
+
+  - name: "GitHub Trending"
+    type: json
+    url: "https://api.github.com/search/repositories?q=stars:>5000&sort=stars&order=desc&per_page=20"
+    enabled: true
+    paginate: true
+    # GitHub rate-limit 60 req/h unauthed, 5000 with token
+
+  - name: "arXiv"
+    type: xml
+    url: "http://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.DC&sortBy=submittedDate&sortOrder=descending&max_results=20"
+    enabled: true
+    paginate: true

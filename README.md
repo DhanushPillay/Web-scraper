@@ -5,7 +5,7 @@ colorFrom: indigo
 colorTo: purple
 sdk: docker
 sdk_version: "4.1.0"
-python_version: "3.10"
+python_version: "3.12"
 app_port: 7860
 tags:
   - flask
@@ -17,26 +17,45 @@ tags:
   - sentiment-analysis
 ---
 
-# Sniffer
+# Sniffer — Cloud Data Lake for Tech Intelligence
 
-![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)
+![Python Version](https://img.shields.io/badge/python-3.12-blue)
 ![Flask Version](https://img.shields.io/badge/flask-3.0%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
-Sniffer is a Flask application that collects technology stories from five major sources, enriches the data with NLP metadata, and serves a searchable, mobile-first PWA dashboard with bookmarks, exports, and integration endpoints.
+**Sniffer is a cloud-native data lake pipeline** that ingests 7 heterogeneous sources (RSS / JSON / XML) into a partitioned Parquet lakehouse, processed with PySpark + DuckDB and served as a PWA — **₹0 infra** on Hugging Face Spaces + Neon + GitHub Actions.
+
+> Formerly *Sniffer*. Same polished PWA, now with a *data platform* underneath for Big Data / Cloud interviews.
+
+## Architecture — Lakehouse (₹0, no AWS)
+
+```text
+[RSS] HN · TechCrunch · Verge · Ars  +  [JSON] Reddit · GitHub Trending  +  [XML] arXiv
+        │  BaseScraper(Retry3) + pagination + watermark.json  (variety: 3 protocols)
+        ▼
+Bronze  data/bronze/YYYY/MM/DD/<source>.jsonl  (append-only, raw)
+        │  validate.py (link NOT NULL, title>10, dedup)
+        ▼
+Silver  data/silver/  Parquet partitioned by day/source  (pyarrow)
+        │  PySpark local[*] repartition(source) → Gold  (or pandas fallback)
+        ▼
+Gold    data/gold/YYYY/MM/DD/daily_stats.{parquet,json}  (DuckDB/Athena SQL)
+        │  GitHub Actions cron → Hugging Face Dataset (private 100GB free)
+        ▼
+Serving  Flask PWA + Neon Postgres (0.5GB free) + DuckDB reads Gold for /api/stats
+```
 
 ## What It Does
 
-- Aggregates stories from Hacker News, TechCrunch, Reddit (r/technology), The Verge, and Ars Technica.
-- Scrapes sources concurrently with retries, RSS-first strategy, and source health tracking.
-- Caches scraper results (5 minute TTL) to reduce unnecessary network requests.
-- Persists data in SQLite with deduplication by URL and ~280-char article excerpts for preview.
-- Supports full-text search via SQLite FTS5 (title, author, source, excerpt) with LIKE fallback.
-- Adds metadata in the background: category, sentiment, read time.
-- Supports bookmarks, read/unread status, and personalized feed ranking.
-- Exports data as CSV, JSON, and Markdown.
-- Offers optional webhook test and SMTP digest endpoints.
-- **Mobile-first, accessible PWA** with offline support, install prompt, and keyboard shortcuts.
+- **Ingests 7 sources** — Hacker News / TechCrunch / Reddit / The Verge / Ars Technica / **GitHub Trending (JSON API)** / **arXiv (XML Atom)** — concurrent `asyncio.to_thread` + `Semaphore(8)` image enrichment + dedup by `link` + credibility filter.
+- **Variety:** RSS + JSON + XML, 3 schemas unified to one Silver schema (proves you handle semi-structured).
+- **Incremental:** `watermark.json` + per-day Bronze append (not full reload) — history accumulates to Parquet, not just last 30 rows.
+- **Lakehouse:** Bronze JSONL → Silver Parquet partitioned `day/source` → Gold aggregates via PySpark (`local[*]`) or pandas fallback → queried via DuckDB (`read_parquet(..., hive_partitioning=1)`) — same SQL as Athena, no Redshift bill.
+- **Quality:** `pipeline/validate.py` (link/title/score checks, duplicate detection) + `data_quality.log`.
+- **Storage:** SQLite WAL for OLTP bookmarks + Parquet lake for analytics + Neon 0.5GB free for prod (HF SQLite ephemeral otherwise).
+- **Serving:** Same mobile-first PWA, FTS5 search, bookmarks, exports, now with `/api/stats` preferring Gold layer.
+- **Orchestration:** GitHub Actions cron `0 2 * * *` (public repo = unlimited minutes) → `pipeline/run.py` → artifact + HF Dataset push (no APScheduler on HF free tier).
+- **IaC:** `infrastructure/main.tf` (S3 bucket stub) + `docker-compose.yml` — shows Terraform without provisioning.
 
 ## Recent Major Updates
 
@@ -65,33 +84,42 @@ Sniffer is a Flask application that collects technology stories from five major 
 - **Database indexes** — `created_at`, `source`, `is_saved`, `is_read`, `category`, `score`.
 - **WAL mode** — better concurrent read performance.
 
-## Quick Start (Local)
+## Quick Start (Local — still 1 command)
 
 ```bash
 git clone https://huggingface.co/spaces/your-username/sniffer
 cd sniffer
-docker build -t sniffer .
-docker run -p 7860:7860 sniffer
-# Open http://localhost:7860
-```
-
-Or without Docker:
-```bash
 pip install -r requirements.txt
 python -c "import nltk; [nltk.download(r, quiet=True) for r in ['punkt','punkt_tab','vader_lexicon','stopwords']]"
-python app.py
+# lake: scrape → bronze → silver → gold (no AWS)
+python pipeline/run.py          # scrapes 7 sources, writes data/bronze → silver → gold
+python app.py                   # http://localhost:7860 (reads Gold if present, else DB)
 ```
 
-## Configuration (Environment Variables)
+With Docker:
+```bash
+docker compose up --build        # app on 7860
+docker compose run --rm pipeline python pipeline/run.py
+```
+
+Lake only (reuse bronze):
+```bash
+python pipeline/run.py --no-scrape   # reprocess existing Bronze
+python -c "from processing.spark_job import run_gold_pandas; run_gold_pandas()"
+```
+
+## Configuration (Environment Variables — all optional)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `SECRET_KEY` | No | random | Flask secret |
-| `WEBHOOK_URL` | No | — | Slack/Discord webhook for `/api/webhook/test` |
-| `SMTP_HOST` `SMTP_PORT` `SMTP_USER` `SMTP_PASS` | No | — | Email digest via `/api/email/digest` |
-| `DATABASE_URL` | No | SQLite | Postgres DSN (Render, etc.) |
-| `ALLOWED_ORIGINS` | No | — | CORS origins for API |
-| `TRUSTED_HOSTS` | No | localhost | Host header allowlist |
+| `DATABASE_URL` | No | SQLite | Neon free Postgres DSN (`postgresql://.../neondb`) |
+| `HF_DATASET` | No | — | HF Dataset for Gold push (`username/sniffer-gold`) |
+| `HF_TOKEN` | No | — | HF write token (for GH Actions push) |
+| `GITHUB_TOKEN` | No | `GITHUB_TOKEN` in Actions | Raises GitHub API 60→5000 req/h |
+| `SNIFFER_MINIMAL` | No | `0` | `1` = only 5 core sources (CI without token) |
+| `WEBHOOK_URL` / `SMTP_*` | No | — | Optional integrations |
+| `ALLOWED_ORIGINS` / `TRUSTED_HOSTS` | No | — | CORS/host allowlist |
 
 ## API Reference
 
@@ -109,17 +137,31 @@ python app.py
 | GET | `/api/search?q=` | FTS5 search |
 | GET | `/api/health` | Scraper health |
 | GET | `/api/personalized` | Personalized feed |
-| GET | `/api/articles/load-more` | Paginated articles |
 | POST | `/api/summarize` | Summarize URL `{url}` |
 | POST | `/api/webhook/test` | Test webhook (needs `WEBHOOK_URL`) |
 | POST | `/api/email/digest` | Send digest (needs SMTP) |
 
-## HF Spaces Notes
+## Free Deployment (₹0, no AWS)
 
-- **SQLite is ephemeral** — data resets on rebuild. For persistence, set `DATABASE_URL` to a managed Postgres (e.g., Neon, Supabase).
-- **APScheduler disabled** on HF free tier (no background workers). Use "Refresh" button to scrape manually.
-- **Port 7860** is required by HF Spaces (configured in Dockerfile).
-- **First load** may take 15–30s while scrapers fetch and enrich articles.
+| Layer | Where | Free forever | Limits |
+|---|---|---|---|
+| App | HF Spaces CPU Basic | YES | 2 vCPU/16GB, 50GB disk, sleeps 48h |
+| Lake (Gold) | HF Dataset (private) | YES | 100GB, versioned |
+| DB (bookmarks) | Neon | YES | 0.5GB, 100 CU-hours/mo, 100 projects |
+| Cron | GitHub Actions (public repo) | YES | unlimited public, 2000 min/mo private |
+| Alt DB | Supabase | YES but pauses 7d idle | 500MB — use Neon to avoid |
+
+**Deploy:**
+```bash
+# 1. HF Space (Docker) — git push, no card
+git remote add space https://huggingface.co/spaces/<you>/sniffer
+git push space main
+
+# 2. Neon — Settings → Variables → DATABASE_URL
+# 3. HF Dataset for Gold — create private dataset, set HF_DATASET + HF_TOKEN in Space + GH Secrets
+```
+
+SQLite is ephemeral — Neon's 0.5GB survives rebuilds. Actions cron replaces APScheduler (disabled on HF). Port 7860 required by HF.
 
 ## License
 

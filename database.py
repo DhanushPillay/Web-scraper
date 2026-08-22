@@ -5,6 +5,7 @@ pagination, reading list, and export features.
 Supports both SQLite (local) and PostgreSQL (production).
 """
 import os
+import re
 import sqlite3
 import time
 import json
@@ -39,11 +40,20 @@ class Database:
             conn.autocommit = False
             try:
                 yield conn
+                conn.commit()
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
             finally:
                 self._pg_pool.putconn(conn)
         else:
             conn = sqlite3.connect(self.db_name, timeout=15)
             conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             conn.row_factory = sqlite3.Row
             try:
                 yield conn
@@ -76,17 +86,15 @@ class Database:
                         read_time INTEGER DEFAULT 0,
                         metadata_processed_at REAL,
                         excerpt TEXT DEFAULT '',
-                        image_url TEXT DEFAULT ''
+                        image_url TEXT DEFAULT '',
+                        dek TEXT DEFAULT '',
+                        bullets TEXT DEFAULT '[]'
                     )
                 ''')
-                # Create indexes for PostgreSQL
+                # Create indexes for PostgreSQL (keep composites, drop redundant single-col where composite covers)
                 indexes = [
-                    "CREATE INDEX IF NOT EXISTS idx_articles_source ON articles(source)",
-                    "CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_sentiment ON articles(sentiment)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_created_at ON articles(created_at DESC)",
-                    "CREATE INDEX IF NOT EXISTS idx_articles_is_saved ON articles(is_saved)",
-                    "CREATE INDEX IF NOT EXISTS idx_articles_is_read ON articles(is_read)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_source_created ON articles(source, created_at DESC)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_category_created ON articles(category, created_at DESC)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_saved_created ON articles(is_saved, created_at DESC)",
@@ -118,11 +126,15 @@ class Database:
                         read_time INTEGER DEFAULT 0,
                         metadata_processed_at REAL,
                         excerpt TEXT DEFAULT '',
-                        image_url TEXT DEFAULT ''
+                        image_url TEXT DEFAULT '',
+                        dek TEXT DEFAULT '',
+                        bullets TEXT DEFAULT '[]'
                     )
                 ''')
 
-                # Migrations for existing SQLite databases
+                # Migrations for existing SQLite databases (single PRAGMA, not 9 SELECTs)
+                cursor.execute("PRAGMA table_info(articles)")
+                existing_cols = {row[1] for row in cursor.fetchall()}
                 migrations = [
                     ("is_saved", "INTEGER DEFAULT 0"),
                     ("is_read", "INTEGER DEFAULT 0"),
@@ -133,11 +145,11 @@ class Database:
                     ("metadata_processed_at", "REAL"),
                     ("excerpt", "TEXT DEFAULT ''"),
                     ("image_url", "TEXT DEFAULT ''"),
+                    ("dek", "TEXT DEFAULT ''"),
+                    ("bullets", "TEXT DEFAULT '[]'"),
                 ]
                 for col_name, col_type in migrations:
-                    try:
-                        cursor.execute(f"SELECT {col_name} FROM articles LIMIT 1")
-                    except sqlite3.OperationalError:
+                    if col_name not in existing_cols:
                         logger.info(f"Migrating DB: Adding '{col_name}' column...")
                         cursor.execute(f"ALTER TABLE articles ADD COLUMN {col_name} {col_type}")
 
@@ -172,14 +184,10 @@ class Database:
                     END
                 ''')
 
-                # SQLite indexes
+                # SQLite indexes (composite covers single-col lookups)
                 indexes = [
-                    "CREATE INDEX IF NOT EXISTS idx_articles_source ON articles(source)",
-                    "CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_sentiment ON articles(sentiment)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_created_at ON articles(created_at DESC)",
-                    "CREATE INDEX IF NOT EXISTS idx_articles_is_saved ON articles(is_saved)",
-                    "CREATE INDEX IF NOT EXISTS idx_articles_is_read ON articles(is_read)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_source_created ON articles(source, created_at DESC)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_category_created ON articles(category, created_at DESC)",
                     "CREATE INDEX IF NOT EXISTS idx_articles_saved_created ON articles(is_saved, created_at DESC)",
@@ -207,7 +215,7 @@ class Database:
 
     def _date_trunc_day(self, col: str) -> str:
         if self._use_postgres:
-            return f"DATE({col})"
+            return f"DATE(to_timestamp({col}))"
         return f"date({col}, 'unixepoch')"
 
     def _glob(self, col: str, pattern: str) -> str:
@@ -235,9 +243,9 @@ class Database:
                     INSERT INTO articles
                     (title, link, score, author, time_posted, comments, source, created_at,
                      is_saved, is_read, sentiment, sentiment_score, category, read_time,
-                     metadata_processed_at, excerpt, image_url)
+                     metadata_processed_at, excerpt, image_url, dek, bullets)
                     VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph},
-                            0, 0, 'neutral', 0.0, 'general', 0, NULL, {ph}, {ph})
+                            0, 0, 'neutral', 0.0, 'general', 0, NULL, {ph}, {ph}, {ph}, {ph})
                     ON CONFLICT (link) DO NOTHING
                 ''', [
                     (
@@ -246,7 +254,9 @@ class Database:
                         a.get('comments', '0'), a.get('source', 'Unknown'),
                         time.time(),
                         a.get('excerpt', ''),
-                        a.get('image_url', '')
+                        a.get('image_url', ''),
+                        a.get('dek', ''),
+                        json.dumps(a.get('bullets', []) or [], ensure_ascii=False),
                     )
                     for a in articles
                 ])
@@ -326,6 +336,15 @@ class Database:
             for row in rows:
                 d = dict(row)
                 d['time'] = d['time_posted']
+                # parse bullets JSON
+                try:
+                    b = d.get('bullets')
+                    if isinstance(b, str):
+                        d['bullets'] = json.loads(b) if b else []
+                    elif b is None:
+                        d['bullets'] = []
+                except Exception:
+                    d['bullets'] = []
                 results.append(d)
 
             return results
@@ -358,8 +377,24 @@ class Database:
     # Full-Text Search
     # ──────────────────────────────────────────────
 
+    def _sanitize_fts_query(self, query: str) -> str:
+        """Escape FTS5 special syntax to prevent injection/errors."""
+        # Remove FTS5 operators and quote the query as phrase tokens
+        # ponytail: naive quoting is safer than full FTS parser; upgrade to fts5 tokeniser if needed
+        cleaned = re.sub(r'[\"\*\(\)\:\^\-]', ' ', query)
+        cleaned = re.sub(r'\b(AND|OR|NOT|NEAR)\b', ' ', cleaned, flags=re.IGNORECASE)
+        tokens = [t for t in re.findall(r'[a-zA-Z0-9]+', cleaned) if len(t) >= 2]
+        if not tokens:
+            return ''
+        # Join as OR phrase for broader recall
+        return ' OR '.join(f'"{t}"' for t in tokens[:10])
+
     def search_articles(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Full-text search using FTS5 (SQLite) or ILIKE (PostgreSQL)."""
+        if not query or not query.strip():
+            return []
+        # ILIKE requires escaping % and _ wildcards
+        query_escaped = query.replace('%', r'\%').replace('_', r'\_')
         with self.get_connection() as conn:
             cursor = conn.cursor()
             ph = self._ph_one()
@@ -367,11 +402,14 @@ class Database:
                 # PostgreSQL: use ILIKE across multiple columns
                 cursor.execute(f'''
                     SELECT * FROM articles
-                    WHERE title ILIKE {ph} OR excerpt ILIKE {ph} OR author ILIKE {ph} OR source ILIKE {ph}
+                    WHERE title ILIKE {ph} ESCAPE '\\' OR excerpt ILIKE {ph} ESCAPE '\\' OR author ILIKE {ph} ESCAPE '\\' OR source ILIKE {ph} ESCAPE '\\'
                     ORDER BY created_at DESC
                     LIMIT {ph}
-                ''', (f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%", limit))
+                ''', (f"%{query_escaped}%", f"%{query_escaped}%", f"%{query_escaped}%", f"%{query_escaped}%", limit))
             else:
+                fts_query = self._sanitize_fts_query(query)
+                if not fts_query:
+                    return self.get_articles(limit=limit, keyword=query, sort_by='newest')
                 try:
                     cursor.execute('''
                         SELECT a.* FROM articles a
@@ -379,16 +417,21 @@ class Database:
                         WHERE articles_fts MATCH ?
                         ORDER BY rank
                         LIMIT ?
-                    ''', (query, limit))
+                    ''', (fts_query, limit))
                 except sqlite3.OperationalError as e:
                     logger.warning(f"FTS search error: {e}")
-                    return self.get_articles(limit=limit, keyword=query, sort_by='newest')
+                    return self.get_articles(limit=limit, keyword=query_escaped, sort_by='newest')
 
             rows = cursor.fetchall()
             results = []
             for row in rows:
                 d = dict(row)
                 d['time'] = d['time_posted']
+                try:
+                    b = d.get('bullets')
+                    d['bullets'] = json.loads(b) if isinstance(b, str) and b else (b or [])
+                except Exception:
+                    d['bullets'] = []
                 results.append(d)
             return results
 
@@ -586,19 +629,39 @@ class Database:
                 # No preferences yet, return recent articles
                 return self.get_articles(limit=limit)
 
-            # Build a scoring query that boosts preferred content
-            placeholders_src = self._ph(len(preferred_sources))
-            placeholders_cat = self._ph(len(preferred_categories))
-
-            query = f'''
-                SELECT *,
-                    (CASE WHEN source IN ({placeholders_src}) THEN 2 ELSE 0 END +
-                     CASE WHEN category IN ({placeholders_cat}) THEN 1 ELSE 0 END) as relevance_score
-                FROM articles
-                ORDER BY relevance_score DESC, created_at DESC
-                LIMIT {ph}
-            '''
-            params = preferred_sources + preferred_categories + [limit]
+            # Build a scoring query that boosts preferred content (avoid IN () when list empty)
+            if preferred_sources and preferred_categories:
+                placeholders_src = self._ph(len(preferred_sources))
+                placeholders_cat = self._ph(len(preferred_categories))
+                query = f'''
+                    SELECT *,
+                        (CASE WHEN source IN ({placeholders_src}) THEN 2 ELSE 0 END +
+                          CASE WHEN category IN ({placeholders_cat}) THEN 1 ELSE 0 END) as relevance_score
+                    FROM articles
+                    ORDER BY relevance_score DESC, created_at DESC
+                    LIMIT {ph}
+                '''
+                params = preferred_sources + preferred_categories + [limit]
+            elif preferred_sources:
+                placeholders_src = self._ph(len(preferred_sources))
+                query = f'''
+                    SELECT *,
+                        (CASE WHEN source IN ({placeholders_src}) THEN 2 ELSE 0 END) as relevance_score
+                    FROM articles
+                    ORDER BY relevance_score DESC, created_at DESC
+                    LIMIT {ph}
+                '''
+                params = preferred_sources + [limit]
+            else:
+                placeholders_cat = self._ph(len(preferred_categories))
+                query = f'''
+                    SELECT *,
+                        (CASE WHEN category IN ({placeholders_cat}) THEN 1 ELSE 0 END) as relevance_score
+                    FROM articles
+                    ORDER BY relevance_score DESC, created_at DESC
+                    LIMIT {ph}
+                '''
+                params = preferred_categories + [limit]
             cursor.execute(query, params)
             rows = cursor.fetchall()
 
@@ -606,6 +669,11 @@ class Database:
             for row in rows:
                 d = dict(row)
                 d['time'] = d['time_posted']
+                try:
+                    b = d.get('bullets')
+                    d['bullets'] = json.loads(b) if isinstance(b, str) and b else (b or [])
+                except Exception:
+                    d['bullets'] = []
                 results.append(d)
             return results
 

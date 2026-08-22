@@ -1,0 +1,63 @@
+name: Sniffer Daily Lake
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 07:30 IST daily — free, public repo = unlimited minutes
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install deps (no Spark by default)
+        run: |
+          pip install -r requirements.txt
+          pip install pyarrow duckdb pandas pyyaml huggingface_hub
+
+      - name: Run lake pipeline (scrape → bronze → silver → gold)
+        env:
+          HF_DATASET: ${{ secrets.HF_DATASET }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python pipeline/run.py
+          ls -R data || true
+          cat data/gold/*/daily_stats.json || true
+
+      - name: Upload Gold artifact (free 500 MB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gold-${{ github.run_id }}
+          path: data/gold/
+          retention-days: 14
+
+      - name: Push Gold to HF Dataset (if configured)
+        if: env.HF_DATASET != ''
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python -c "
+          from huggingface_hub import HfApi
+          import os, pathlib
+          ds=os.getenv('HF_DATASET')
+          if not ds or not os.getenv('HF_TOKEN'):
+              print('HF_DATASET or HF_TOKEN not set, skip')
+              exit(0)
+          api=HfApi()
+          api.upload_folder(repo_id=ds, repo_type='dataset', folder_path='data/gold', path_in_repo='gold')
+          print(f'pushed gold to {ds}')
+          "
+
+  # optional: keep Supabase alive (if you use Supabase instead of Neon)
+  # ping:
+  #   runs-on: ubuntu-latest
+  #   if: github.event.schedule != ''
+  #   steps:
+  #     - run: curl -fsS https://your-space.hf.space/api/stats || true

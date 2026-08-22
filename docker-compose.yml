@@ -1,0 +1,24 @@
+# Sniffer — local compose (app + pipeline)
+# ponytail: no K8s needed; compose proves reproducibility for <5 services
+services:
+  app:
+    build: .
+    ports:
+      - "7860:7860"
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-}
+      - HF_DATASET=${HF_DATASET:-}
+      - SNIFFER_MINIMAL=0
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  # run pipeline manually: docker compose run --rm pipeline python pipeline/run.py
+  pipeline:
+    build: .
+    entrypoint: ["python", "pipeline/run.py"]
+    volumes:
+      - ./data:/app/data
+      - ./configs:/app/configs
+    env_file: .env
