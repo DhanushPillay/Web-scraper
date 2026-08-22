@@ -33,5 +33,6 @@ USER user
 # Expose port
 EXPOSE 7860
 
-# Run gunicorn on port 7860
-CMD ["gunicorn", "-b", "0.0.0.0:7860", "-w", "2", "app:app"]
+# Run gunicorn on port 7860 (from src module)
+ENV PYTHONPATH=/app/src
+CMD ["gunicorn", "-b", "0.0.0.0:7860", "-w", "2", "src.app:app"]

@@ -29,6 +29,8 @@ jobs:
           pip install pytest
 
       - name: Run Pytest Suite
+        env:
+          PYTHONPATH: src
         run: |
           pytest tests/ -v
 
@@ -63,8 +65,9 @@ jobs:
       - name: Execute Lakehouse Pipeline (Bronze -> Silver -> Spark Gold)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
         run: |
-          python pipeline/run.py
+          python src/pipeline/run.py
 
       - name: Upload Gold Analytical Marts
         uses: actions/upload-artifact@v4

@@ -1,0 +1,539 @@
+/* ==========================================================================
+   SNIFFER — Premium Editorial Dark Mode
+   A human-crafted, high-contrast, tactile reading experience.
+   ========================================================================== */
+
+/* ── 1. Design Tokens ────────────────────────────────────────────── */
+:root {
+  /* Color System — Refined Dark Mode */
+  --bg-base: #0B0B0C;         /* Deep, rich espresso black */
+  --bg-surface: #141415;      /* Elevated surface */
+  --bg-elevated: #1C1C1E;     /* Highest elevation */
+  
+  --border-subtle: #242426;   /* Structural grid lines */
+  --border-focus: #3A3A3D;    
+  
+  --text-primary: #F2F2F2;    /* Crisp paper white */
+  --text-secondary: #9E9E9F;  /* Subdued editorial grey */
+  --text-tertiary: #68686A;   /* Meta info */
+  
+  /* Curated "Dopamine" Accents (Instead of one generic neon color) */
+  --accent-blue: #3B82F6;
+  --accent-crimson: #EF4444;
+  --accent-amber: #F59E0B;
+  --accent-emerald: #10B981;
+  --accent-violet: #8B5CF6;
+  
+  /* Typography */
+  --font-sans: 'Geist', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+  
+  /* Layout & Spacing (Asymmetrical & Intentional) */
+  --space-2: 0.5rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+  
+  /* Motion / Easing */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --transition-fast: 150ms var(--ease-out-expo);
+  --transition-med: 300ms var(--ease-out-expo);
+  --transition-slow: 500ms var(--ease-out-expo);
+}
+
+/* ── 2. Reset & Base ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { 
+  font-size: 16px; 
+  -webkit-font-smoothing: antialiased; 
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-base);
+}
+body {
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-base);
+  min-height: 100vh;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+a { color: inherit; text-decoration: none; }
+img { display: block; max-width: 100%; height: auto; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; }
+ul, ol { list-style: none; }
+:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+
+/* Motion sensitivity */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { 
+    animation-duration: 0.01ms !important; 
+    transition-duration: 0.01ms !important; 
+  }
+}
+
+/* ── 3. Layout & Structure ───────────────────────────────────────── */
+.sn-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.sn-container {
+  width: 100%;
+  max-width: 1024px; /* Tighter editorial width */
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+}
+
+/* ── 4. Navigation (Editorial Header) ────────────────────────────── */
+.sn-navbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(11, 11, 12, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-4) 0;
+}
+.sn-navbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.sn-brand {
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.sn-brand-icon {
+  color: var(--text-primary);
+}
+.sn-nav-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex: 1;
+  justify-content: flex-end;
+}
+.sn-nav-links {
+  display: flex;
+  gap: var(--space-4);
+}
+.sn-nav-link {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: color var(--transition-fast);
+  position: relative;
+}
+.sn-nav-link:hover { color: var(--text-primary); }
+.sn-nav-link.is-active { color: var(--text-primary); }
+.sn-nav-link.is-active::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--text-primary);
+}
+.sn-count {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  margin-left: 2px;
+  opacity: 0.7;
+}
+
+/* Search */
+.sn-search-form {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+}
+.sn-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+.sn-search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 36px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  transition: all var(--transition-fast);
+}
+.sn-search-input:focus {
+  background: var(--bg-base);
+  border-color: var(--text-primary);
+  outline: none;
+}
+.sn-search-input::placeholder { color: var(--text-tertiary); }
+
+/* ── 5. Page Header & Filters ────────────────────────────────────── */
+.sn-header {
+  padding: var(--space-12) 0 var(--space-8);
+}
+.sn-page-title {
+  font-size: 2.5rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin-bottom: var(--space-4);
+}
+.sn-stats-chips {
+  display: flex;
+  gap: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+.sn-stats-chips strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Refined Filters */
+.sn-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-8);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.sn-filter-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+  display: block;
+}
+.sn-filter-bar select {
+  appearance: none;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  padding: 8px 32px 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239E9E9F'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+  transition: border-color var(--transition-fast);
+}
+.sn-filter-bar select:hover, .sn-filter-bar select:focus {
+  border-color: var(--text-secondary);
+  outline: none;
+}
+
+/* ── 6. Tactical UI Buttons & Micro-Interactions ─────────────────── */
+.sn-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 16px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: var(--radius-full);
+  transition: all var(--transition-fast);
+  text-align: center;
+  will-change: transform;
+}
+.sn-btn:active {
+  transform: scale(0.96); /* Tactile press effect */
+}
+.sn-btn-primary {
+  background: var(--text-primary);
+  color: var(--bg-base);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.1);
+}
+.sn-btn-primary:hover {
+  background: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+.sn-btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+.sn-btn-ghost:hover {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+/* ── 7. Article Feed (Editorial List Layout) ─────────────────────── */
+.sn-feed {
+  display: flex;
+  flex-direction: column;
+}
+/* No more generic cards. We use strong structural lines */
+.sn-article {
+  padding: var(--space-6) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-4);
+  /* Animation Hook */
+  opacity: 0;
+  animation: fadeUpStagger 0.6s var(--ease-out-expo) forwards;
+}
+/* Staggering the first 10 items */
+.sn-article:nth-child(1) { animation-delay: 50ms; }
+.sn-article:nth-child(2) { animation-delay: 100ms; }
+.sn-article:nth-child(3) { animation-delay: 150ms; }
+.sn-article:nth-child(4) { animation-delay: 200ms; }
+.sn-article:nth-child(5) { animation-delay: 250ms; }
+.sn-article:nth-child(6) { animation-delay: 300ms; }
+.sn-article:nth-child(7) { animation-delay: 350ms; }
+.sn-article:nth-child(n+8) { animation-delay: 400ms; }
+
+@keyframes fadeUpStagger {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.sn-article-meta-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.sn-article-category {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.sn-article-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.sn-article-title a {
+  transition: color var(--transition-fast);
+}
+.sn-article-title a:hover {
+  color: var(--text-secondary);
+}
+.sn-article-excerpt {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+/* Actions Row */
+.sn-article-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-2);
+}
+.sn-source-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.sn-source-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+/* Assigning "Dopamine" Colors to Sources */
+.sn-source-dot[data-src="Hacker News"] { background: var(--accent-amber); }
+.sn-source-dot[data-src="TechCrunch"] { background: var(--accent-emerald); }
+.sn-source-dot[data-src="Reddit"] { background: var(--accent-crimson); }
+.sn-source-dot[data-src="The Verge"] { background: #E83E8C; }
+.sn-source-dot[data-src="Ars Technica"] { background: var(--accent-blue); }
+.sn-source-dot[data-src="GitHub Trending"] { background: var(--accent-violet); }
+.sn-source-dot[data-src="arXiv"] { background: #A8A29E; }
+
+.sn-article-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── 8. Quick Read Drawer (Modal Replacement) ────────────────────── */
+.sn-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-med);
+}
+.sn-modal-overlay.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sn-modal-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 100%;
+  max-width: 500px;
+  height: 100vh;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-subtle);
+  box-shadow: -8px 0 24px rgba(0,0,0,0.4);
+  z-index: 1001;
+  transform: translateX(100%);
+  transition: transform var(--transition-slow);
+  display: flex;
+  flex-direction: column;
+}
+.sn-modal-overlay.is-open + .sn-modal-drawer,
+.sn-modal-drawer.is-open {
+  transform: translateX(0);
+}
+
+.sn-drawer-header {
+  padding: var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.sn-drawer-title-group {
+  flex: 1;
+}
+.sn-drawer-kicker {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent-emerald);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.sn-drawer-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.sn-drawer-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  transition: all var(--transition-fast);
+}
+.sn-drawer-close:hover {
+  background: var(--border-subtle);
+  color: var(--text-primary);
+  transform: rotate(90deg);
+}
+
+.sn-drawer-content {
+  padding: var(--space-6);
+  overflow-y: auto;
+  flex: 1;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+/* NLP Bullet Styling */
+.sn-bullet-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.sn-bullet-item {
+  position: relative;
+  padding-left: 20px;
+}
+.sn-bullet-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-focus);
+}
+
+.sn-drawer-footer {
+  padding: var(--space-6);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  gap: var(--space-4);
+}
+.sn-drawer-footer .sn-btn {
+  flex: 1;
+}
+
+/* ── 9. Loading States ───────────────────────────────────────────── */
+.sn-loader {
+  display: none;
+  padding: var(--space-12) 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  font-size: 0.875rem;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ── 10. Responsive Tweaks ───────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sn-page-title { font-size: 2rem; }
+  .sn-nav-controls { gap: var(--space-4); }
+  .sn-search-form { display: none; /* Hide on small screens for minimal nav */ }
+  .sn-article-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-4);
+  }
+  .sn-article-actions { width: 100%; }
+  .sn-article-actions .sn-btn { flex: 1; }
+}
