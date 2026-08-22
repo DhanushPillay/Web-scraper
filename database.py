@@ -22,43 +22,73 @@ class Database:
         self.db_name = db_name
         self._use_postgres = bool(os.getenv("DATABASE_URL"))
         self._pg_pool = None
+
+        if self._use_postgres:
+            try:
+                self._init_pg_pool()
+                # Test connection upfront
+                conn = self._pg_pool.getconn()
+                self._pg_pool.putconn(conn)
+            except Exception as e:
+                logger.error(f"PostgreSQL connection failed: {e}. Falling back to SQLite WAL mode.")
+                self._use_postgres = False
+                if self._pg_pool:
+                    try:
+                        self._pg_pool.closeall()
+                    except Exception:
+                        pass
+                self._pg_pool = None
+
         self.init_db()
+
+    def _init_pg_pool(self) -> None:
+        """Initializes the PostgreSQL connection pool."""
+        if self._pg_pool is None:
+            import psycopg2
+            from psycopg2.pool import SimpleConnectionPool
+            dsn = os.getenv("DATABASE_URL", "").strip()
+            # Render provides postgres://... but psycopg2 requires postgresql://
+            if dsn.startswith("postgres://"):
+                dsn = dsn.replace("postgres://", "postgresql://", 1)
+            self._pg_pool = SimpleConnectionPool(1, 5, dsn)
 
     @contextmanager
     def get_connection(self):
-        """Context manager that auto-closes the DB connection."""
+        """Context manager that auto-closes the DB connection with automatic fallback."""
         if self._use_postgres:
-            import psycopg2
-            from psycopg2.pool import SimpleConnectionPool
-            if self._pg_pool is None:
-                dsn = os.getenv("DATABASE_URL")
-                # Render provides postgresql://... but psycopg2 needs postgresql://
-                if dsn.startswith("postgres://"):
-                    dsn = dsn.replace("postgres://", "postgresql://", 1)
-                self._pg_pool = SimpleConnectionPool(1, 5, dsn)
-            conn = self._pg_pool.getconn()
-            conn.autocommit = False
             try:
-                yield conn
-                conn.commit()
-            except Exception:
+                if self._pg_pool is None:
+                    self._init_pg_pool()
+                conn = self._pg_pool.getconn()
+                conn.autocommit = False
                 try:
-                    conn.rollback()
+                    yield conn
+                    conn.commit()
                 except Exception:
-                    pass
-                raise
-            finally:
-                self._pg_pool.putconn(conn)
-        else:
-            conn = sqlite3.connect(self.db_name, timeout=15)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.row_factory = sqlite3.Row
-            try:
-                yield conn
-            finally:
-                conn.close()
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    raise
+                finally:
+                    if self._pg_pool:
+                        self._pg_pool.putconn(conn)
+                return
+            except Exception as e:
+                logger.error(f"PostgreSQL connection error: {e}. Falling back to SQLite.")
+                self._use_postgres = False
+                self._pg_pool = None
+
+        # SQLite fallback
+        conn = sqlite3.connect(self.db_name, timeout=15)
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def init_db(self) -> None:
         """Initializes the database table and ensures schema is up to date."""
