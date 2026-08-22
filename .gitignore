@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 *.pyo
 sniffer.db
@@ -11,9 +11,11 @@ instance/
 *.log
 .mypy_cache/
 .pytest_cache/
-# lake — generated, not committed (keep structure via .gitkeep)
+# lake — generated, not committed
 data/bronze/
 data/silver/
 data/gold/
+data/quarantine/
+data/logs/
 data/watermark.json
 data/data_quality.log

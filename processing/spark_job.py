@@ -1,155 +1,284 @@
 """
-Gold — Sniffer aggregates
-run_gold: PySpark local[*] if available, else run_gold_pandas
-Output: data/gold/<day>/daily_stats.parquet (or .json)
-ponytail: pandas fallback keeps pipeline green without Java/Spark; Spark path proves distributed skill.
+Processing — Medallion Lakehouse Gold Layer
+Transforms Silver Parquet datasets into analytical marts and aggregated metrics.
+Supports distributed processing via PySpark with high-performance DuckDB/Pandas fallback.
 """
-from pathlib import Path
-from datetime import datetime, timezone
 import json
+import logging
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 GOLD_ROOT = Path("data/gold")
 SILVER_ROOT = Path("data/silver")
+BRONZE_ROOT = Path("data/bronze")
 
 
-def _load_silver(day: str = None) -> list[dict]:
+def load_silver_records(day: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Loads records from Silver Parquet layer (or Bronze fallback) for a target date partition.
+    """
     if day is None:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     day = day.replace("/", "-")
-    # try parquet via pyarrow / duckdb, else jsonl fallback
-    rows = []
-    # parquet path (pyarrow dataset)
+
+    records: List[Dict[str, Any]] = []
+
+    # 1. Try reading via DuckDB (fastest, supports Hive partition pruning)
     try:
-        import pyarrow.dataset as ds
-        dataset = ds.dataset(str(SILVER_ROOT), format="parquet", partitioning="hive")
-        # filter by day if possible
-        table = dataset.to_table(filter=ds.field("day") == day) if day else dataset.to_table()
-        rows = table.to_pylist()
-        if rows:
-            return rows
+        import duckdb
+        silver_pattern = f"{str(SILVER_ROOT).replace('\\', '/')}/**/*.parquet"
+        query = f"SELECT * FROM read_parquet('{silver_pattern}', hive_partitioning=1)"
+        if day:
+            query += f" WHERE day = '{day}'"
+        df = duckdb.query(query).df()
+        if not df.empty:
+            return df.to_dict(orient="records")
     except Exception:
         pass
 
-    # jsonl fallback (check both hyphen and slash layouts)
-    for cand in [f"data/silver/{day}", f"data/silver/{day.replace('-', '/')}"]:
-        for p in Path(cand).glob("*.jsonl"):
-            for line in p.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    try:
-                        rows.append(json.loads(line))
-                    except Exception:
-                        continue
-    # also try bronze fallback
-    if not rows:
-        for cand in [f"data/bronze/{day}", f"data/bronze/{day.replace('-', '/')}"]:
-            for p in Path(cand).glob("*.jsonl"):
+    # 2. Try PyArrow dataset
+    try:
+        import pyarrow.dataset as ds
+        if SILVER_ROOT.exists():
+            dataset = ds.dataset(str(SILVER_ROOT), format="parquet", partitioning="hive")
+            if day:
+                table = dataset.to_table(filter=ds.field("day") == day)
+            else:
+                table = dataset.to_table()
+            records = table.to_pylist()
+            if records:
+                return records
+    except Exception:
+        pass
+
+    # 3. Fallback to Bronze JSONL if Silver is not yet written
+    candidates = [
+        BRONZE_ROOT / day,
+        BRONZE_ROOT / day.replace("-", "/")
+    ]
+    for base in candidates:
+        if base.exists():
+            for p in base.glob("*.jsonl"):
                 for line in p.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         try:
-                            rows.append(json.loads(line))
-                        except:
-                            pass
-    return rows
+                            records.append(json.loads(line))
+                        except Exception:
+                            continue
+
+    return records
 
 
-def run_gold_pandas(day: str = None) -> Path:
-    """Pandas fallback — no Spark/Java needed."""
+def run_gold_spark(day: Optional[str] = None) -> Path:
+    """
+    PySpark execution path: Computes window rankings, sentiment aggregates,
+    and category engagement marts using PySpark DataFrame APIs.
+    """
     try:
-        import pandas as pd
-    except ImportError:
-        # minimal pure-python aggregate
-        rows = _load_silver(day)
-        from collections import Counter
-        by_cat = Counter(r.get("category", "general") for r in rows)
-        by_src = Counter(r.get("source", "unknown") for r in rows)
-        out = GOLD_ROOT / (day or datetime.now(timezone.utc).strftime("%Y/%m/%d"))
-        out.mkdir(parents=True, exist_ok=True)
-        Path(out / "daily_stats.json").write_text(
-            json.dumps({"by_category": dict(by_cat), "by_source": dict(by_src), "total": len(rows)}, indent=2),
-            encoding="utf-8",
-        )
-        return out
-
-    rows = _load_silver(day)
-    if not rows:
-        raise ValueError(f"no silver rows for day {day}")
-    df = pd.DataFrame(rows)
-    # normalize
-    if "category" not in df.columns:
-        df["category"] = "general"
-    if "source" not in df.columns:
-        df["source"] = "unknown"
-    by_cat = df.groupby("category").size().reset_index(name="count")
-    by_src = df.groupby("source").size().reset_index(name="count")
-
-    day = (day or datetime.now(timezone.utc).strftime("%Y-%m-%d")).replace("/", "-")
-    out = GOLD_ROOT / day
-    out.mkdir(parents=True, exist_ok=True)
-
-    # try parquet, else json
-    try:
-        by_cat.to_parquet(out / "by_category.parquet", index=False)
-        by_src.to_parquet(out / "by_source.parquet", index=False)
-    except Exception:
-        by_cat.to_json(out / "by_category.json", orient="records", indent=2)
-        by_src.to_json(out / "by_source.json", orient="records", indent=2)
-
-    # also write combined stats json for Flask
-    stats = {
-        "day": day,
-        "total": len(df),
-        "by_category": dict(zip(by_cat["category"], by_cat["count"])),
-        "by_source": dict(zip(by_src["source"], by_src["count"])),
-    }
-    (out / "daily_stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
-    return out
-
-
-def run_gold(day: str = None) -> Path:
-    """PySpark path — requires Java + pyspark."""
-    try:
-        from pyspark.sql import SparkSession
+        from pyspark.sql import SparkSession, Window
         import pyspark.sql.functions as F
+        from pyspark.sql.types import (
+            DoubleType, IntegerType, StringType, StructField, StructType
+        )
     except ImportError as e:
-        raise RuntimeError("pyspark not installed") from e
+        raise RuntimeError("PySpark is not installed in the current environment") from e
 
-    rows = _load_silver(day)
+    if day is None:
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = day.replace("/", "-")
+
+    rows = load_silver_records(day)
     if not rows:
-        raise ValueError(f"no silver rows for day {day}")
+        raise ValueError(f"No records found for partition day={day}")
 
-    spark = SparkSession.builder.master("local[*]").appName("sniffer-gold").getOrCreate()
+    spark = (
+        SparkSession.builder
+        .master("local[*]")
+        .appName("Lakehouse-Gold-Analytics")
+        .config("spark.sql.shuffle.partitions", "2")
+        .getOrCreate()
+    )
     spark.sparkContext.setLogLevel("WARN")
 
-    df = spark.createDataFrame(rows)
-    # ponytail: repartition proves distributed, but keep 2 partitions for small data
-    df = df.repartition(2, "source") if "source" in df.columns else df.repartition(2)
+    try:
+        # Standardize schema
+        for r in rows:
+            r["score"] = int(r.get("score") or 0)
+            r["category"] = str(r.get("category") or "general")
+            r["source"] = str(r.get("source") or "unknown")
+            r["sentiment"] = str(r.get("sentiment") or "neutral")
+            r["sentiment_score"] = float(r.get("sentiment_score") or 0.0)
+            r["read_time"] = int(r.get("read_time") or 3)
 
-    # normalize category
-    if "category" not in df.columns:
-        df = df.withColumn("category", F.lit("general"))
-    else:
-        df = df.withColumn("category", F.coalesce(F.col("category"), F.lit("general")))
+        df = spark.createDataFrame(rows)
 
-    by_cat = df.groupBy("category").count().orderBy(F.desc("count"))
-    by_src = df.groupBy("source").count().orderBy(F.desc("count")) if "source" in df.columns else None
+        # Repartition by source for balanced processing
+        df = df.repartition(2, "source")
 
-    day = (day or datetime.now(timezone.utc).strftime("%Y-%m-%d")).replace("/", "-")
-    out = GOLD_ROOT / day
-    out.mkdir(parents=True, exist_ok=True)
+        # 1. Window Function: Rank top articles per category by engagement score
+        cat_window = Window.partitionBy("category").orderBy(F.col("score").desc())
+        ranked_df = df.withColumn("category_rank", F.dense_rank().over(cat_window))
 
-    # write via pandas for simplicity (spark write needs hadoop)
-    by_cat.toPandas().to_parquet(out / "by_category.parquet", index=False)
-    if by_src is not None:
-        by_src.toPandas().to_parquet(out / "by_source.parquet", index=False)
+        # 2. Mart 1: Category engagement and sentiment distribution
+        category_marts = (
+            df.groupBy("category")
+            .agg(
+                F.count("link").alias("article_count"),
+                F.avg("score").alias("avg_score"),
+                F.max("score").alias("max_score"),
+                F.avg("sentiment_score").alias("avg_sentiment_score"),
+                F.avg("read_time").alias("avg_read_time_mins"),
+            )
+            .orderBy(F.desc("article_count"))
+        )
 
-    # stats json
-    total = df.count()
-    cat_dict = {r["category"]: r["count"] for r in by_cat.collect()}
-    src_dict = {r["source"]: r["count"] for r in by_src.collect()} if by_src else {}
-    (out / "daily_stats.json").write_text(
-        json.dumps({"day": day, "total": total, "by_category": cat_dict, "by_source": src_dict}, indent=2),
-        encoding="utf-8",
-    )
+        # 3. Mart 2: Source reliability & volume distribution
+        source_marts = (
+            df.groupBy("source")
+            .agg(
+                F.count("link").alias("total_articles"),
+                F.avg("score").alias("avg_engagement"),
+                F.sum("score").alias("total_engagement_score"),
+            )
+            .orderBy(F.desc("total_articles"))
+        )
 
-    spark.stop()
-    return out
+        out_dir = GOLD_ROOT / day
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save marts as Snappy Parquet
+        category_marts.toPandas().to_parquet(out_dir / "category_metrics.parquet", index=False)
+        source_marts.toPandas().to_parquet(out_dir / "source_metrics.parquet", index=False)
+        ranked_df.filter(F.col("category_rank") <= 5).toPandas().to_parquet(
+            out_dir / "top_ranked_articles.parquet", index=False
+        )
+
+        # Generate combined JSON telemetry for the web dashboard
+        cat_summary = {r["category"]: r["article_count"] for r in category_marts.collect()}
+        src_summary = {r["source"]: r["total_articles"] for r in source_marts.collect()}
+
+        stats = {
+            "execution_date": day,
+            "engine": "Apache Spark (PySpark 3.5)",
+            "total_articles": df.count(),
+            "by_category": cat_summary,
+            "by_source": src_summary,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        (out_dir / "daily_stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
+        logger.info(f"[Gold] Spark job completed successfully for day={day}")
+
+        return out_dir
+    finally:
+        spark.stop()
+
+
+def run_gold_duckdb(day: Optional[str] = None) -> Path:
+    """
+    DuckDB analytical path: High-performance, zero-JVM SQL execution
+    generating identical analytical marts over Silver Parquet partitions.
+    """
+    import duckdb
+
+    if day is None:
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = day.replace("/", "-")
+
+    rows = load_silver_records(day)
+    if not rows:
+        raise ValueError(f"No records found for partition day={day}")
+
+    out_dir = GOLD_ROOT / day
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    con = duckdb.connect(database=":memory:")
+    try:
+        # Load records into in-memory table
+        import pandas as pd
+        df = pd.DataFrame(rows)
+        if "category" not in df.columns:
+            df["category"] = "general"
+        if "source" not in df.columns:
+            df["source"] = "unknown"
+        if "score" not in df.columns:
+            df["score"] = 0
+        if "sentiment_score" not in df.columns:
+            df["sentiment_score"] = 0.0
+        if "read_time" not in df.columns:
+            df["read_time"] = 3
+
+        con.register("silver_stage", df)
+
+        # 1. Category Metrics Mart
+        cat_df = con.execute("""
+            SELECT
+                category,
+                COUNT(*) AS article_count,
+                ROUND(AVG(score), 2) AS avg_score,
+                MAX(score) AS max_score,
+                ROUND(AVG(sentiment_score), 3) AS avg_sentiment_score,
+                ROUND(AVG(read_time), 1) AS avg_read_time_mins
+            FROM silver_stage
+            GROUP BY category
+            ORDER BY article_count DESC
+        """).df()
+        cat_df.to_parquet(out_dir / "category_metrics.parquet", index=False)
+
+        # 2. Source Metrics Mart
+        src_df = con.execute("""
+            SELECT
+                source,
+                COUNT(*) AS total_articles,
+                ROUND(AVG(score), 2) AS avg_engagement,
+                SUM(score) AS total_engagement_score
+            FROM silver_stage
+            GROUP BY source
+            ORDER BY total_articles DESC
+        """).df()
+        src_df.to_parquet(out_dir / "source_metrics.parquet", index=False)
+
+        # 3. Top Ranked Articles per Category (Window function)
+        ranked_df = con.execute("""
+            WITH ranked AS (
+                SELECT
+                    title,
+                    link,
+                    source,
+                    category,
+                    score,
+                    DENSE_RANK() OVER (PARTITION BY category ORDER BY score DESC) as category_rank
+                FROM silver_stage
+            )
+            SELECT * FROM ranked WHERE category_rank <= 5
+        """).df()
+        ranked_df.to_parquet(out_dir / "top_ranked_articles.parquet", index=False)
+
+        stats = {
+            "execution_date": day,
+            "engine": "DuckDB In-Memory Analytical Engine",
+            "total_articles": len(df),
+            "by_category": dict(zip(cat_df["category"], cat_df["article_count"])),
+            "by_source": dict(zip(src_df["source"], src_df["total_articles"])),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        (out_dir / "daily_stats.json").write_text(json.dumps(stats, indent=2), encoding="utf-8")
+        logger.info(f"[Gold] DuckDB analytics completed for day={day}")
+
+        return out_dir
+    finally:
+        con.close()
+
+
+def run_gold(day: Optional[str] = None) -> Path:
+    """
+    Main Gold orchestrator: Attempts PySpark first; seamlessly falls back
+    to DuckDB in non-Java/local developer environments.
+    """
+    try:
+        return run_gold_spark(day=day)
+    except Exception as spark_err:
+        logger.info(f"PySpark engine unavailable or bypassed ({spark_err}). Using DuckDB engine.")
+        return run_gold_duckdb(day=day)

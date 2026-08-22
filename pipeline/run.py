@@ -1,95 +1,109 @@
 """
-Run — Sniffer one-command lake build
-Usage: python pipeline/run.py  [--no-scrape]  [--day 2026/08/22]
-Scrapes (if needed) → Bronze → validate → Silver → Gold (Spark if available else pandas)
+Pipeline Runner — Medallion Lakehouse Build
+Orchestrates end-to-end execution:
+Ingestion (Bronze) -> Validation & Quarantine -> Enrichment -> Silver Parquet -> Gold Analytics Marts.
 """
 import argparse
+import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-# ensure project root on path
+# Ensure project root is on Python path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pipeline.ingest import write_bronze_by_source
-from pipeline.validate import validate_batch
+from pipeline.validate import (
+    validate_batch, save_quarantine_records, save_quality_metrics
+)
 from pipeline.enrich import enrich_batch
-from pipeline.transform import to_silver, _read_bronze_day
-from datetime import datetime, timezone
+from pipeline.transform import to_silver, read_bronze_records
+from processing.spark_job import run_gold
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("pipeline.run")
 
 
-def _scrape(hn_pages=1, force=True):
+def scrape_sources(hn_pages: int = 1, force: bool = True):
+    """Executes heterogeneous scraping across all enabled sources."""
     from web_scraper import NewsAggregator
-    agg = NewsAggregator()
-    agg.scrape_all(hn_pages=hn_pages, force=force)
-    arts = agg.get_articles()
-    # also load from sources.yaml if available (future 7 sources)
-    try:
-        import yaml
-        cfg = yaml.safe_load(Path("configs/sources.yaml").read_text(encoding="utf-8"))
-        # already covered by aggregator for now; yaml is for docs/config-driven claim
-    except Exception:
-        pass
-    return arts
+    aggregator = NewsAggregator()
+    aggregator.scrape_all(hn_pages=hn_pages, force=force)
+    return aggregator.get_articles()
+
+
+def run_pipeline(no_scrape: bool = False, day: str = None) -> dict:
+    """Executes the complete Medallion Lakehouse data pipeline."""
+    if day is None:
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = day.replace("/", "-")
+
+    logger.info(f"=== Starting Lakehouse Pipeline for Partition: day={day} ===")
+
+    # 1. BRONZE LAYER: Ingestion
+    if not no_scrape:
+        logger.info("[1/5] Ingesting raw records from heterogeneous feeds...")
+        articles = scrape_sources()
+        logger.info(f"Scraped {len(articles)} raw articles.")
+        bronze_outputs = write_bronze_by_source(articles, day=day)
+        logger.info(f"Bronze layer updated across {len(bronze_outputs)} source partitions.")
+    else:
+        logger.info(f"[1/5] Reusing existing Bronze records for day={day} (--no-scrape)")
+        articles = read_bronze_records(day=day)
+        logger.info(f"Loaded {len(articles)} existing Bronze records.")
+
+    if not articles:
+        logger.warning(f"No records available to process for day={day}. Exiting.")
+        return {"status": "EMPTY", "day": day}
+
+    # 2. DATA QUALITY GATE: Validation & Quarantine Isolation
+    logger.info("[2/5] Running declarative data quality checks...")
+    valid_records, quarantined_records, quality_summary = validate_batch(articles, day=day)
+    save_quality_metrics(quality_summary)
+
+    if quarantined_records:
+        q_path = save_quarantine_records(quarantined_records, day=day)
+        logger.warning(
+            f"Quarantined {len(quarantined_records)} bad records (saved to {q_path}). "
+            f"Pass rate: {quality_summary['data_quality_pass_rate_percent']}%"
+        )
+    else:
+        logger.info(f"100% data quality pass rate ({len(valid_records)} records).")
+
+    # 3. ENRICHMENT: NLP Extractive Summaries & Metadata
+    logger.info("[3/5] Enriching articles with extractive deks and bullets...")
+    enriched_records = enrich_batch(valid_records, fetch=False)
+
+    # 4. SILVER LAYER: Hive-Partitioned Snappy Parquet
+    logger.info("[4/5] Transforming to Silver Snappy Parquet layer...")
+    silver_path = to_silver(enriched_records, day=day)
+    logger.info(f"Silver Parquet written to: {silver_path}")
+
+    # 5. GOLD LAYER: Analytical Marts (PySpark / DuckDB)
+    logger.info("[5/5] Building Gold analytical marts & window rankings...")
+    gold_path = run_gold(day=day)
+    logger.info(f"Gold analytical marts generated at: {gold_path}")
+
+    logger.info("=== Lakehouse Pipeline Completed Successfully ===")
+    return {
+        "status": "SUCCESS",
+        "day": day,
+        "valid_count": len(valid_records),
+        "quarantined_count": len(quarantined_records),
+        "quality_pass_rate": quality_summary["data_quality_pass_rate_percent"],
+    }
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--no-scrape", action="store_true", help="reuse existing Bronze")
-    ap.add_argument("--day", default=None, help="day partition YYYY/MM/DD")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Medallion Lakehouse Pipeline Runner")
+    parser.add_argument("--no-scrape", action="store_true", help="Reprocess existing Bronze records without scraping")
+    parser.add_argument("--day", default=None, help="Target partition date (format: YYYY-MM-DD)")
+    args = parser.parse_args()
 
-    day = args.day or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    day = day.replace("/", "-")
-
-    if not args.no_scrape:
-        print("[run] scraping...")
-        articles = _scrape()
-        print(f"[run] scraped {len(articles)} articles")
-        # ingest bronze
-        out = write_bronze_by_source(articles)
-        print(f"[run] bronze: {out}")
-    else:
-        articles = _read_bronze_day(day)
-        print(f"[run] reusing bronze {day}: {len(articles)} rows")
-
-    # validate
-    if not args.no_scrape:
-        valid, invalid = validate_batch(articles)
-        print(f"[run] valid {len(valid)}/{len(articles)}, invalid {len(invalid)}")
-        if invalid:
-            Path("data/silver").mkdir(parents=True, exist_ok=True)
-            Path("data/data_quality.log").write_text(
-                "\n".join(str(x.get("_errors")) for x in invalid[:20]), encoding="utf-8"
-            )
-        articles = valid
-
-    # enrich — dek + 3 bullets (free, offline)
-    articles = enrich_batch(articles, fetch=False)
-    print(f"[run] enriched {len(articles)} with dek/bullets")
-    if articles and articles[0].get("dek"):
-        print(f"  example dek: {articles[0]['dek'][:100]}")
-        print(f"  bullets: {articles[0].get('bullets')}")
-
-    # silver
-    silver_path = to_silver(articles, day=day)
-    print(f"[run] silver -> {silver_path}")
-
-    # gold (try Spark, else pandas fallback)
-    try:
-        from processing.spark_job import run_gold
-        gold_path = run_gold(day=day)
-        print(f"[run] gold (spark) -> {gold_path}")
-    except Exception as e:
-        print(f"[run] spark gold failed ({e}), trying pandas fallback...")
-        try:
-            from processing.spark_job import run_gold_pandas
-            gold_path = run_gold_pandas(day=day)
-            print(f"[run] gold (pandas) -> {gold_path}")
-        except Exception as e2:
-            print(f"[run] gold failed: {e2}")
-            gold_path = None
-
-    print("[run] done.")
+    run_pipeline(no_scrape=args.no_scrape, day=args.day)
 
 
 if __name__ == "__main__":

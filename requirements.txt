@@ -29,5 +29,5 @@ duckdb>=0.10.0
 pyyaml>=6.0
 pandas>=2.0.0
 huggingface_hub>=0.20.0
-# Spark — heavy, install only in CI (GH Actions) or locally: pip install pyspark==3.5.1
-# pyspark==3.5.1
+# Testing & Reliability
+pytest>=8.0.0
