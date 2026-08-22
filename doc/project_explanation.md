@@ -1,242 +1,112 @@
-# Sniffer - Technical Architecture
+# Cloud-Native Lakehouse Platform — Technical Architecture
 
-This document explains the current implementation in the repository and reflects the latest hardening and data-flow changes.
-
----
-
-## 1. System Overview
-
-The app is a Flask-based news aggregation service composed of three core modules:
-
-- web_scraper.py: source adapters + aggregation orchestration
-- database.py: SQLite persistence, FTS5 indexing, and query APIs
-- app.py: HTTP routes, validation, background jobs, and integration endpoints
-
-Data flow:
-
-1. Scrapers pull stories from external sources.
-2. Aggregator merges story lists and caches them for 5 minutes.
-3. Database layer inserts deduplicated records.
-4. Metadata enrichment updates sentiment/category/read-time asynchronously.
-5. Flask routes serve UI and API responses from persisted data.
+This document provides a comprehensive technical breakdown of the **Cloud-Native Lakehouse & Automated Tech Intelligence Ingestion Platform**.
 
 ---
 
-## 2. Scraping Layer (web_scraper.py)
+## 1. Architectural Philosophy: Medallion Lakehouse
 
-### 2.1 BaseScraper Contract
+The platform decouples ingestion, validation, distributed transformation, and analytical serving into a **Medallion Data Lakehouse** architecture running at **₹0 / $0 cloud infrastructure cost**:
 
-All source scrapers inherit from BaseScraper and share:
-
-- requests.Session with retry policy:
-  - total retries: 3
-  - backoff_factor: 0.5
-  - retried statuses: 429, 500, 502, 503
-- common User-Agent header
-- health state fields:
-  - last_status
-  - last_scrape_time
-  - scrape_duration
-  - last_error
-
-### 2.2 Source Adapters
-
-- HackerNewsScraper:
-  - primary source: hnrss.org RSS
-  - fallback source: news.ycombinator.com HTML parser
-- TechCrunchScraper: RSS
-- RedditScraper: JSON API (/r/technology/top.json)
-- TheVergeScraper: RSS
-- ArsTechnicaScraper: RSS
-
-### 2.3 Aggregation and Caching
-
-NewsAggregator manages all scrapers and executes them via ThreadPoolExecutor(max_workers=5).
-
-- CACHE_TTL = 300 seconds
-- scrape_all(force=False) returns cached in-memory results when TTL is valid
-- scrape_all(force=True) always refreshes source content
-- get_health() exposes per-source scrape diagnostics
-
----
-
-## 3. Persistence and Search Layer (database.py)
-
-### 3.1 SQLite Connection Behavior
-
-Each operation uses a short-lived context-managed connection with:
-
-- sqlite3.Row row factory
-- timeout=15 at connect time
-- PRAGMA busy_timeout = 5000
-
-This improves behavior under transient lock pressure.
-
-### 3.2 Schema and Migrations
-
-Primary table: articles
-
-- Core identity/content: id, title, link, score, author, time_posted, comments, source
-- Runtime state: created_at, is_saved, is_read
-- NLP metadata: sentiment, sentiment_score, category, read_time
-- Metadata lifecycle: metadata_processed_at
-
-Initialization includes idempotent migration checks for expected columns before ALTER TABLE.
-
-### 3.3 Full-Text Search (FTS5)
-
-- Virtual table: articles_fts(title, author, source)
-- Synchronization triggers:
-  - articles_ai (insert)
-  - articles_ad (delete)
-  - articles_au (update)
-- search_articles(query, limit) issues MATCH queries
-- If FTS errors, database falls back to LIKE-based retrieval
-
-### 3.4 Query Semantics and Sorting
-
-get_articles supports filtering by source, keyword, saved/unread state, and category.
-
-Sort behavior is SQL-driven (not post-pagination in Python):
-
-- newest: created_at DESC
-- score: CAST(score AS INTEGER) DESC, created_at DESC
-- comments: numeric comments DESC, created_at DESC
-
-This guarantees consistent ordering across paginated pages.
-
-### 3.5 Metadata Processing Idempotency
-
-get_unprocessed_articles now selects rows where metadata_processed_at IS NULL.
-
-During enrichment, update_article_metadata sets metadata_processed_at, so the same rows are not repeatedly reprocessed in subsequent background runs.
+```text
+                           [ DATA SOURCES ]
+            ┌───────────────────────────┬───────────────────────────┐
+            │  RSS / Atom Feeds         │  REST / JSON APIs         │  XML Feeds
+            │  (HN, TechCrunch, Verge)  │  (Reddit, GitHub Trends)  │  (arXiv CS)
+            └─────────────┬─────────────┴─────────────┬─────────────┴─────┬─────┘
+                          │                           │                   │
+                          ▼                           ▼                   ▼
+                  ┌───────────────────────────────────────────────────────────┐
+                  │            BaseScraper (HTTP Retry 3x Backoff)            │
+                  │       Async HTTP + Bounded Concurrency (Semaphore 8)      │
+                  │       Credibility Filter + Deduplication (by Link)        │
+                  └─────────────────────────────┬─────────────────────────────┘
+                                                │
+                                                ▼
+     ┌─────────────────────────────────────────────────────────────────────────────────────┐
+     │                             MEDALLION DATA PIPELINE                                 │
+     │                                                                                     │
+     │  1. BRONZE LAYER (Raw Ingestion)                                                    │
+     │     └── Output: data/bronze/YYYY-MM-DD/<source>.jsonl (Append-only + SHA-256 Hash)  │
+     │                                                                                     │
+     │  2. DATA QUALITY GATE & QUARANTINE                                                  │
+     │     ├── validate.py: Evaluates declarative schema contracts                         │
+     │     ├── Quarantine: Corrupted records saved to data/quarantine/                     │
+     │     └── Metrics: Observability summary saved to data/logs/quality_metrics.json      │
+     │                                                                                     │
+     │  3. SILVER LAYER (Structured & Cleaned)                                             │
+     │     └── transform.py: PyArrow Snappy Parquet partitioned by [day, source]           │
+     │                                                                                     │
+     │  4. GOLD LAYER (Analytical Marts via PySpark & DuckDB)                              │
+     │     └── spark_job.py: PySpark local[*] / DuckDB in-memory analytical engine         │
+     │         - Window Ranking: DENSE_RANK() top stories per category                     │
+     │         - Aggregation Marts: category_metrics.parquet, source_metrics.parquet       │
+     └──────────────────────────────────────────┬──────────────────────────────────────────┘
+                                                │
+                 ┌──────────────────────────────┴──────────────────────────────┐
+                 ▼                                                             ▼
+    [ SERVING & OLTP LAYER ]                                      [ ORCHESTRATION & IAC ]
+    ├── Flask Mobile PWA (Gunicorn, Port 7860)                    ├── GitHub Actions CI/CD (Test & Build)
+    ├── SQLite WAL (Local) / Neon Postgres (Prod)                 ├── Apache Airflow DAG (Local/Prod)
+    ├── DuckDB (Direct SQL on Gold Parquet Marts)                 ├── Docker & Docker Compose
+    └── FTS5 Full-Text Search + REST APIs                         └── Terraform (AWS S3 + Athena Stub)
+```
 
 ---
 
-## 4. Application Layer (app.py)
+## 2. Ingestion Layer (`web_scraper.py` & `pipeline/ingest.py`)
 
-### 4.1 Input Validation and Normalization
+### 2.1 Heterogeneous Protocols
+The ingestion engine extracts from 7 heterogeneous sources across 3 protocol standards:
+* **RSS Feeds**: Hacker News, TechCrunch, The Verge, Ars Technica.
+* **REST APIs (JSON)**: Reddit (`/r/technology/top.json`), GitHub Search API (trending repositories with `stars:>5000`).
+* **XML Atom API**: arXiv CS research paper repository (`cs.AI`, `cs.LG`, `cs.DC`).
 
-The route layer includes centralized helpers for input safety:
-
-- parse_bounded_int: numeric clamping for pagination/scrape bounds
-- parse_positive_int: strict positive id parsing
-- sanitize_keyword: regex-filtered keyword with max length
-- sanitize_search_query: bounded FTS query sanitization
-- normalize_sort_by: restricts sort to score/comments/newest
-- normalize_source_filter: source whitelist
-- normalize_category_filter: category whitelist based on keyword map
-- get_json_payload: safe JSON parsing returning None for malformed bodies
-
-### 4.2 URL and Email Safety
-
-is_safe_url applies outbound URL protections:
-
-- http/https only
-- rejects credentialed URLs
-- rejects localhost and blocked hostnames
-- blocks private/reserved/link-local/loopback/multicast/unspecified IPs
-- resolves hostnames and rejects those resolving to disallowed IP ranges
-- allows explicit ports only 80 and 443
-
-is_valid_email enforces length and blocks CRLF characters before regex validation.
-
-### 4.3 Dashboard Routes
-
-- GET/POST / : main feed, scraping trigger, filtered retrieval, pagination
-- GET /saved : saved-only feed
-- GET /download : streamed CSV export
-
-### 4.4 API Routes
-
-- POST /bookmark
-- POST /toggle_read
-- POST /subscribe
-- GET /api/stats
-- GET /api/search
-- GET /api/health
-- GET /api/personalized
-- POST /api/summarize
-- POST /api/webhook/test
-- POST /api/email/digest
-- GET /export/json
-- GET /export/markdown
-
-Error handling patterns:
-
-- Invalid/missing JSON payloads return 400
-- Invalid article ids return 400
-- Missing rows in bookmark/read toggles return 404
-- summarize and webhook endpoints reject unsafe URLs
+### 2.2 Idempotency & Checksumming
+Each raw record is assigned a deterministic SHA-256 fingerprint:
+$$\text{record\_hash} = \text{SHA-256}(\text{source} + ":" + \text{canonical\_link})$$
+Bronze JSONL appends check for existing hashes in the partition boundary to guarantee that repeated ingestion runs are **100% idempotent**.
 
 ---
 
-## 5. NLP and Metadata Enrichment
+## 3. Data Quality Gate (`pipeline/validate.py`)
 
-Metadata is derived from article titles:
+Every ingested record passes through a declarative schema contract:
+* **Required Field Integrity**: `title`, `link`, `source` must be non-null and non-empty.
+* **Length Constraints**: $10 \le \text{len(title)} \le 500$.
+* **URL Format**: Strictly validated HTTP/HTTPS syntax.
+* **Score Bounds**: Integer scores $\ge 0$.
 
-- Category classification: keyword scoring over CATEGORY_KEYWORDS
-- Sentiment analysis: NLTK VADER compound score thresholds
-- Read-time estimate: heuristic based on title length
-
-Background enrichment flow:
-
-1. Fetch unprocessed rows (metadata_processed_at IS NULL)
-2. Compute category, sentiment, read-time
-3. Persist metadata + metadata_processed_at timestamp
+### Quarantine Routing
+Records failing validation are isolated into `data/quarantine/YYYY-MM-DD/quarantined_records.jsonl` with structured diagnostic error tags. Pass rate metrics are logged to `data/logs/quality_metrics.json`.
 
 ---
 
-## 6. Scheduler Lifecycle
+## 4. Transformation & Analytical Marts
 
-Background scraping uses APScheduler when installed.
+### 4.1 Silver Layer (`pipeline/transform.py`)
+Converts validated records into columnar **Snappy Parquet** tables Hive-partitioned by `day=YYYY-MM-DD/source=<source>/`. This enables partition pruning and dictionary compression (reducing disk storage by 60–80%).
 
-- start_scheduler() creates a 15-minute interval job for background_scrape
-- In Flask debug mode, startup is guarded with WERKZEUG_RUN_MAIN checks to avoid duplicate scheduler instances
-- stop_scheduler() is registered via atexit for graceful shutdown
-
-Startup sequence in __main__:
-
-1. logging setup
-2. initial metadata processing pass
-3. scheduler startup
-4. app.run
+### 4.2 Gold Layer (`processing/spark_job.py`)
+Executes analytical transformations with dual-engine support:
+* **Apache Spark (PySpark 3.5)**: Distributed DataFrame operations, repartitioning, and window functions (`DENSE_RANK() OVER (PARTITION BY category ORDER BY score DESC)`).
+* **DuckDB (Zero-JVM Fallback)**: Embedded vectorized SQL engine executing analytical views with zero external cloud infrastructure costs.
 
 ---
 
-## 7. Export and Integrations
+## 5. Storage & Serving Layer
 
-- CSV export: streamed response with csv.DictWriter + generator
-- JSON export: saved/bookmarked articles as JSON
-- Markdown export: bookmarks grouped by source
-- Webhook test: posts compact digest payload to WEBHOOK_URL
-- Email digest: SMTP-based digest of top 10 records
-
----
-
-## 8. Frontend and PWA
-
-Template: templates/index.html
-
-- Bootstrap-based dashboard
-- client-side API calls for bookmark/read/summary/subscribe/personalized features
-- service worker registration
-
-PWA support:
-
-- GET /manifest.json route
-- static/service-worker.js cache implementation
+| Storage Layer | Technology | Primary Job |
+| :--- | :--- | :--- |
+| **Data Lake** | Hive-Partitioned Parquet | Columnar analytical storage for multi-source trend analysis |
+| **OLTP Database** | SQLite WAL / Neon PostgreSQL | High-concurrency transactional storage for user bookmarks and search |
+| **Analytics Engine**| DuckDB In-Memory | Real-time vectorized SQL querying over Parquet partitions |
+| **Search Engine** | SQLite FTS5 | Full-text indexing over titles and article previews |
 
 ---
 
-## 9. Current Gaps
+## 6. Orchestration, IaC & CI/CD
 
-- No automated test suite is implemented yet in tests/
-- No CI pipeline is configured
-- Optional integrations (SMTP/webhook) require environment configuration
-
----
-
-## 10. Summary
-
-The current system is a practical single-node Flask + SQLite architecture optimized for lightweight deployment. Recent updates improved request validation, outbound URL safety, pagination-sort correctness, scheduler lifecycle behavior, and idempotent metadata processing.
+* **Apache Airflow (`dags/`)**: Production DAG definition mapping `check_sources >> ingest_bronze >> validate_quarantine >> transform_silver >> build_gold_marts`.
+* **Terraform (`infrastructure/main.tf`)**: Infrastructure-as-Code specification defining S3 lifecycle transitions (Standard $\to$ IA $\to$ Expiration), Glue Data Catalog, and Athena Workgroup with FinOps query scan limits (500 MB max scan).
+* **GitHub Actions (`.github/workflows/daily.yml`)**: Automated Pytest execution on pull requests and daily scheduled pipeline builds publishing quality telemetry.
