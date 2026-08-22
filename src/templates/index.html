@@ -179,6 +179,18 @@
         </footer>
     </aside>
 
+    <!-- 4. Loading Overlay with Real Progress -->
+    <div id="scrapeOverlay" class="sn-loading-overlay" aria-live="polite">
+        <div class="sn-loading-card">
+            <h3>Scanning Sources</h3>
+            <p id="scrapeStage" class="sn-loading-stage">Initializing...</p>
+            <div class="sn-progress-track">
+                <div id="scrapeProgressFill" class="sn-progress-fill"></div>
+            </div>
+            <span id="scrapePct" class="sn-progress-pct">0%</span>
+        </div>
+    </div>
+
     <script>
         // Drawer & Quick Read Logic
         const drawer = document.getElementById('quickReadDrawer');
@@ -194,9 +206,8 @@
             contentEl.innerHTML = '<div class="sn-loader" style="display:block">Synthesizing intelligence...</div>';
             drawer.classList.add('is-open');
             overlay.classList.add('is-open');
-            document.body.style.overflow = 'hidden'; // Prevent background scrolling
+            document.body.style.overflow = 'hidden';
 
-            // Fetch summary
             fetch('/api/summarize', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -259,6 +270,70 @@
                 });
             }
         });
+
+        // SSE-powered Scrape with Real Progress Bar
+        const scrapeForm = document.getElementById('scrapeForm');
+        const scrapeOverlay = document.getElementById('scrapeOverlay');
+        const scrapeStage = document.getElementById('scrapeStage');
+        const scrapeFill = document.getElementById('scrapeProgressFill');
+        const scrapePct = document.getElementById('scrapePct');
+
+        if (scrapeForm) {
+            scrapeForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                // Show overlay
+                scrapeOverlay.classList.add('show');
+                scrapeStage.textContent = 'Connecting to sources...';
+                scrapeFill.style.width = '0%';
+                scrapePct.textContent = '0%';
+
+                // Stream real progress from backend via SSE
+                fetch('/api/scrape', { method: 'POST' })
+                .then(response => {
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    function pump() {
+                        return reader.read().then(({ done, value }) => {
+                            if (done) {
+                                // Scrape complete — reload page to show results
+                                setTimeout(() => { window.location.href = '/'; }, 400);
+                                return;
+                            }
+                            buffer += decoder.decode(value, { stream: true });
+                            const lines = buffer.split('\n');
+                            buffer = lines.pop(); // keep incomplete line
+
+                            for (const line of lines) {
+                                if (line.startsWith('data: ')) {
+                                    try {
+                                        const evt = JSON.parse(line.slice(6));
+                                        if (evt.stage) scrapeStage.textContent = evt.stage;
+                                        if (evt.progress !== undefined) {
+                                            scrapeFill.style.width = evt.progress + '%';
+                                            scrapePct.textContent = evt.progress + '%';
+                                        }
+                                        if (evt.stage === 'Done') {
+                                            scrapeStage.textContent = `Done — ${evt.total || ''} stories loaded`;
+                                            scrapeFill.style.width = '100%';
+                                            scrapePct.textContent = '100%';
+                                        }
+                                    } catch (_) {}
+                                }
+                            }
+                            return pump();
+                        });
+                    }
+                    return pump();
+                })
+                .catch(err => {
+                    scrapeStage.textContent = 'Scrape failed — reloading...';
+                    setTimeout(() => { window.location.href = '/'; }, 1500);
+                });
+            });
+        }
     </script>
 </body>
 </html>

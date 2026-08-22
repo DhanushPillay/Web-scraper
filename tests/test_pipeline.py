@@ -7,6 +7,7 @@ Comprehensive unit and integration tests covering:
 - Credibility scoring, FTS5 sanitization, personalized feed, and NLP read-time estimation.
 """
 import json
+import sys
 import os
 import shutil
 import tempfile
@@ -15,6 +16,7 @@ import pytest
 
 # Ensure environment flags for isolated testing
 os.environ["SNIFFER_NO_AUTO_INIT"] = "1"
+sys.path.insert(0, os.path.abspath("src"))
 
 from pipeline.ingest import generate_record_hash, write_bronze
 from pipeline.validate import (
@@ -24,8 +26,8 @@ from pipeline.transform import to_silver, _classify_title
 from processing.spark_job import run_gold_duckdb
 from web_scraper import _clean_excerpt
 from utils.credibility import get_scorer
-from app import estimate_read_time, is_safe_url, classify_article
-from database import Database
+from src.app import estimate_read_time, is_safe_url, classify_article
+from src.database import Database
 
 
 @pytest.fixture

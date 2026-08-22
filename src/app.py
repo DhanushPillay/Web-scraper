@@ -876,6 +876,88 @@ def index():
 
 
 # ──────────────────────────────────────────────
+# SSE Scrape Progress Endpoint
+# ──────────────────────────────────────────────
+
+@app.route('/api/scrape', methods=['POST'])
+def api_scrape():
+    """Streams real-time scrape progress via Server-Sent Events (SSE).
+    Each source is scraped individually, and its completion is reported
+    as a progress event so the frontend can update a real progress bar.
+    """
+    def generate():
+        import json as _json
+        agg = get_aggregator()
+        scrapers = agg.scrapers
+        total_steps = len(scrapers) + 3  # scrapers + enrich + db_save + metadata
+        completed = 0
+
+        # Step 1-N: Scrape each source individually
+        agg.articles = []
+        for scraper in scrapers:
+            name = getattr(scraper, 'name', scraper.__class__.__name__)
+            yield f"data: {_json.dumps({'stage': f'Scanning {name}...', 'progress': int(completed / total_steps * 100)})}\n\n"
+            try:
+                pages = 1
+                result = scraper.scrape(pages)
+                if result:
+                    from utils.credibility import is_credible, score_article
+                    for a in result:
+                        if is_credible(a.get('title', ''), a.get('link', '')):
+                            _, cred = score_article(a.get('title', ''), a.get('link', ''))
+                            a['credibility'] = cred
+                            agg.articles.append(a)
+            except Exception as e:
+                logger.error(f"Scraper {name} failed: {e}")
+            completed += 1
+
+        # Deduplicate
+        seen = set()
+        deduped = []
+        for a in agg.articles:
+            link = a.get('link')
+            if link and link not in seen:
+                seen.add(link)
+                deduped.append(a)
+        agg.articles = deduped
+
+        # Step N+1: Image enrichment
+        yield f"data: {_json.dumps({'stage': 'Fetching thumbnails...', 'progress': int(completed / total_steps * 100)})}\n\n"
+        try:
+            import asyncio
+            asyncio.run(agg._enrich_images_async())
+        except Exception as e:
+            logger.warning(f"Image enrichment failed: {e}")
+        completed += 1
+
+        # Step N+2: Enrich + save to DB
+        yield f"data: {_json.dumps({'stage': 'Enriching & saving...', 'progress': int(completed / total_steps * 100)})}\n\n"
+        new_articles = agg.get_articles()
+        try:
+            new_articles = _enrich_batch(new_articles, fetch=False)
+        except Exception as e:
+            logger.warning(f"Enrich failed: {e}")
+        db.add_articles(new_articles)
+        db.upsert_images(new_articles)
+        completed += 1
+
+        # Step N+3: Process metadata
+        yield f"data: {_json.dumps({'stage': 'Processing metadata...', 'progress': int(completed / total_steps * 100)})}\n\n"
+        process_articles_metadata()
+        _stats_cache['data'] = None
+        agg._last_scrape_time = time.time()
+        completed += 1
+
+        # Done
+        total_count = db.get_total_count()
+        yield f"data: {_json.dumps({'stage': 'Done', 'progress': 100, 'total': total_count})}\n\n"
+
+    return Response(stream_with_context(generate()),
+                    mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+# ──────────────────────────────────────────────
 # API Routes
 # ──────────────────────────────────────────────
 

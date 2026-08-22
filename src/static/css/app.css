@@ -351,9 +351,65 @@ ul, ol { list-style: none; }
 .sn-article:nth-child(7) { animation-delay: 350ms; }
 .sn-article:nth-child(n+8) { animation-delay: 400ms; }
 
-@keyframes fadeUpStagger {
+@keyframes sn-fade-up {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Loading Overlay & Progress Bar ──────────────────────────────── */
+.sn-loading-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(11, 11, 12, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+}
+.sn-loading-overlay.show {
+  display: flex;
+}
+.sn-loading-card {
+  text-align: center;
+  max-width: 380px;
+  padding: var(--space-8);
+}
+.sn-loading-card h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-2);
+}
+.sn-loading-stage {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-6);
+  min-height: 1.2em;
+}
+.sn-progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--surface-hover);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: var(--space-3);
+}
+.sn-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--text-primary);
+  border-radius: 3px;
+  transition: width 0.4s var(--ease-spring);
+}
+.sn-progress-pct {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  letter-spacing: 0.05em;
 }
 
 .sn-article-meta-top {
