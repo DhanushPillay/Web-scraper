@@ -1,1 +1,0 @@
-"""Processing package — Gold aggregates."""
