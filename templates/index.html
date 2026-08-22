@@ -6,58 +6,58 @@
     <meta name="description" content="Sniffer — a signal-first tech briefing. Scan 300+ stories, ranked for signal over noise.">
     <title>Sniffer · Tech Briefing</title>
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#101114">
+    <meta name="theme-color" content="#0B0B0C">
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/style.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/style.min.css" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body>
+<body class="sn-layout">
+    
+    <!-- 1. Navigation -->
     <nav class="sn-navbar" aria-label="Primary">
-        <div class="sn-navbar-inner">
+        <div class="sn-container sn-navbar-inner">
             <a href="{{ url_for('index') }}" class="sn-brand" aria-label="Sniffer home">
                 <span class="sn-brand-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="20" height="20">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+                    </svg>
                 </span>
                 <span>SNIFFER</span>
             </a>
-            <div class="sn-nav-links">
-                <a href="{{ url_for('index') }}" class="sn-nav-link {% if not showing_saved %}is-active{% endif %}">Feed</a>
-                <a href="{{ url_for('saved_articles') }}" class="sn-nav-link {% if showing_saved %}is-active{% endif %}">Saved <span class="sn-count">{{ stats.saved if stats else 0 }}</span></a>
-            </div>
-            <form method="GET" action="{{ url_for('index') }}" class="sn-search-form" role="search">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sn-search-icon" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
-                <input id="searchInput" type="search" name="keyword" placeholder="Search stories…" value="{{ keyword|default('') }}" autocomplete="off" class="sn-search-input">
-                <input type="hidden" name="source" value="{{ source_filter|default('all') }}">
-                <input type="hidden" name="category" value="{{ category_filter|default('all') }}">
-                <input type="hidden" name="sort" value="{{ sort_by|default('score') }}">
-            </form>
-            <div class="sn-nav-right">
-                <span class="sn-live-dot">{{ stats.today if stats else 0 }} new</span>
-                <form id="scrapeForm" method="POST" action="{{ url_for('index') }}">
-                    <input type="hidden" name="refresh" value="true"><input type="hidden" name="pages" value="1">
-                    <button type="submit" class="sn-refresh-btn">Refresh</button>
+
+            <div class="sn-nav-controls">
+                <div class="sn-nav-links">
+                    <a href="{{ url_for('index') }}" class="sn-nav-link {% if not showing_saved %}is-active{% endif %}">Feed</a>
+                    <a href="{{ url_for('saved_articles') }}" class="sn-nav-link {% if showing_saved %}is-active{% endif %}">Saved <span class="sn-count">{{ stats.saved if stats else 0 }}</span></a>
+                </div>
+
+                <form method="GET" action="{{ url_for('index') }}" class="sn-search-form" role="search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="sn-search-icon" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+                    <input type="search" name="keyword" placeholder="Search briefing…" value="{{ keyword|default('') }}" autocomplete="off" class="sn-search-input">
+                    <input type="hidden" name="source" value="{{ source_filter|default('all') }}">
+                    <input type="hidden" name="category" value="{{ category_filter|default('all') }}">
+                    <input type="hidden" name="sort" value="{{ sort_by|default('score') }}">
                 </form>
             </div>
         </div>
     </nav>
 
-    <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite"><div class="loading-mark"></div><p id="loadingProgress">Fetching stories…</p></div>
-
-    <main class="sn-main">
-        <!-- Stats bar — compact, inline -->
-        <div class="sn-stats-bar">
-            <div class="sn-stats-bar-left">
-                <h1>{% if showing_saved %}Saved{% elif keyword %}Results for "{{ keyword }}"{% else %}Briefing{% endif %}</h1>
-                <span class="sn-story-count">{{ total_count }} stories</span>
-            </div>
+    <!-- 2. Main Content -->
+    <main class="sn-container sn-main">
+        
+        <!-- Header -->
+        <header class="sn-header">
+            <h1 class="sn-page-title">
+                {% if showing_saved %}Saved Archive{% elif keyword %}Search: "{{ keyword }}"{% else %}Today's Briefing{% endif %}
+            </h1>
             <div class="sn-stats-chips">
-                <span class="sn-stat-chip"><strong>{{ stats.total if stats else 0 }}</strong> in feed</span>
-                <span class="sn-stat-chip"><strong>{{ stats.saved if stats else 0 }}</strong> saved</span>
-                <span class="sn-stat-chip"><strong>{{ stats.today if stats else 0 }}</strong> today</span>
+                <span><strong>{{ total_count }}</strong> stories</span>
+                <span><strong>{{ stats.today if stats else 0 }}</strong> new today</span>
             </div>
-        </div>
+        </header>
 
+        <!-- Filters -->
         {% if not showing_saved %}
         <form class="sn-filter-bar" method="GET" action="{{ url_for('index') }}">
             <input type="hidden" name="keyword" value="{{ keyword|default('') }}">
@@ -95,118 +95,157 @@
                     <option value="comments" {% if sort_by=='comments' %}selected{% endif %}>Most discussed</option>
                 </select>
             </label>
-            {% if keyword or source_filter!='all' or category_filter!='all' or sort_by!='score' %}
-            <a class="sn-clear-filters" href="{{ url_for('index') }}">Clear filters</a>
-            {% endif %}
         </form>
         {% endif %}
 
-        {% if articles %}
-        <!-- Featured hero — first article -->
-        {% if not showing_saved and articles|length > 0 %}
-        {% set feat = articles[0] %}
-        {% set fb = article_fallback_data(feat.source, feat.title, feat.link) %}
-        <article class="sn-featured" data-article-id="{{ feat.id }}">
-            <div class="sn-featured-media">
-                {% if feat.image_url %}
-                <img src="{{ feat.image_url }}" alt="" loading="eager" decoding="async" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
-                <div class="sn-letter-box" style="display:none"><div class="sn-letter-initials" style="background:{{ fb.color }}">{{ fb.initials }}</div></div>
-                {% else %}
-                <div class="sn-letter-box"><div class="sn-letter-initials" style="background:{{ fb.color }}">{{ fb.initials }}</div><div class="sn-letter-title">{{ feat.title[:80] }}</div></div>
-                {% endif %}
-                <span class="sn-source-dot" data-src="{{ feat.source }}">{{ feat.source }}</span>
-                <span class="sn-time-stamp">{{ feat.time|humanize_time }}</span>
-            </div>
-            <div class="sn-featured-body">
-                <div class="sn-featured-kicker">{{ feat.category if feat.category and feat.category!='General' else feat.source }} · {{ feat.read_time or 3 }} min</div>
-                <h2 class="sn-featured-title"><a href="{{ feat.link }}" target="_blank" rel="noopener">{{ feat.title }}</a></h2>
-                {% if feat.dek %}<p class="sn-featured-dek">{{ feat.dek }}</p>{% elif feat.excerpt %}<p class="sn-featured-dek">{{ feat.excerpt }}</p>{% endif %}
-                <div class="sn-featured-meta">
-                    <span>{{ feat.author|default(feat.source) }}</span>
-                    <span>{{ feat.score|default(0) }} pts</span>
-                    <span>{{ feat.comments|default(0) }} comments</span>
-                </div>
-                <div class="sn-featured-actions">
-                    <button class="sn-btn-primary" data-action="summary" data-url="{{ feat.link }}" data-title="{{ feat.title }}">Quick read</button>
-                    <button class="sn-btn-ghost" data-action="bookmark" aria-pressed="{{ 'true' if feat.is_saved else 'false' }}">{{ 'Saved' if feat.is_saved else 'Save' }}</button>
-                    <a class="sn-btn-ghost" href="{{ feat.link }}" target="_blank" rel="noopener">Open →</a>
-                </div>
-            </div>
-        </article>
-        {% endif %}
+        <!-- Article Feed -->
+        <div class="sn-feed">
+            {% if articles %}
+                {% for article in articles %}
+                <article class="sn-article" id="article-{{ article.id }}">
+                    <div class="sn-article-meta-top">
+                        {% if article.category and article.category!='General' %}
+                            <span class="sn-article-category">{{ article.category }}</span>
+                        {% endif %}
+                        <span>{{ article.read_time or 3 }} MIN READ</span>
+                        <span>{{ article.time|humanize_time }}</span>
+                    </div>
+                    
+                    <h2 class="sn-article-title">
+                        <a href="{{ article.link }}" target="_blank" rel="noopener">{{ article.title }}</a>
+                    </h2>
+                    
+                    {% if article.dek or article.excerpt %}
+                        <p class="sn-article-excerpt">{{ article.dek or article.excerpt }}</p>
+                    {% endif %}
 
-        <!-- Story rows — compact, scannable -->
-        <div class="sn-grid">
-            {% for article in (articles[1:] if not showing_saved and articles|length > 0 else articles) %}
-            <article class="sn-row {% if article.is_read %}is-read{% endif %}" id="article-{{ article.id }}" data-article-id="{{ article.id }}">
-                <div class="sn-row-main">
-                    <div class="sn-row-top">
-                        {% if article.category and article.category!='General' %}<span class="sn-row-category">{{ article.category }}</span>{% endif %}
-                        <span class="sn-row-readtime">{{ article.read_time or 3 }} min</span>
+                    <div class="sn-article-footer">
+                        <div class="sn-source-tag">
+                            <span class="sn-source-dot" data-src="{{ article.source }}"></span>
+                            {{ article.source }}
+                            <span style="opacity: 0.5; margin-left: 8px;">{{ article.score|default(0) }} pts</span>
+                        </div>
+                        
+                        <div class="sn-article-actions">
+                            <button class="sn-btn sn-btn-ghost" data-action="summary" data-url="{{ article.link }}" data-title="{{ article.title }}">Quick read</button>
+                            <button class="sn-btn sn-btn-ghost" data-action="bookmark" data-id="{{ article.id }}" aria-pressed="{{ 'true' if article.is_saved else 'false' }}">
+                                {{ 'Saved' if article.is_saved else 'Save' }}
+                            </button>
+                            <a class="sn-btn sn-btn-primary" href="{{ article.link }}" target="_blank" rel="noopener">Open →</a>
+                        </div>
                     </div>
-                    <h2 class="sn-row-title"><a href="{{ article.link }}" target="_blank" rel="noopener">{{ article.title }}</a></h2>
-                    {% if article.dek %}<p class="sn-row-excerpt">{{ article.dek }}</p>{% elif article.excerpt %}<p class="sn-row-excerpt">{{ article.excerpt }}</p>{% endif %}
-                    <div class="sn-row-footer">
-                        <span class="sn-source-dot" data-src="{{ article.source }}">{{ article.source }}</span>
-                        <span class="sn-stat">{{ article.score|default(0) }} pts</span>
-                        <span class="sn-stat">{{ article.comments|default(0) }} cmt</span>
-                        <span class="sn-stat">{{ article.author|default('') }}</span>
-                    </div>
-                </div>
-                <div class="sn-row-side">
-                    <span class="sn-time-stamp">{{ article.time|humanize_time }}</span>
-                    <div class="sn-row-actions">
-                        <button type="button" class="sn-action {% if article.is_saved %}is-active{% endif %}" data-action="bookmark" aria-pressed="{{ 'true' if article.is_saved else 'false' }}" title="Save">
-                            <svg viewBox="0 0 24 24" fill="{{ 'currentColor' if article.is_saved else 'none' }}" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-                        </button>
-                        <button type="button" class="sn-action {% if article.is_read %}is-active{% endif %}" data-action="read" aria-pressed="{{ 'true' if article.is_read else 'false' }}" title="Mark read">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12l5 5L20 7"/></svg>
-                        </button>
-                        <button type="button" class="sn-action" data-action="summary" data-url="{{ article.link }}" data-title="{{ article.title }}" title="Quick read">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 17l-1.5-4.5L6 9l4.5-1.5L12 3z"/></svg>
-                        </button>
-                        <a href="{{ article.link }}" target="_blank" rel="noopener" class="sn-action" title="Open">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                        </a>
-                    </div>
-                </div>
-            </article>
-            {% endfor %}
-        </div>
-
-        {% if total_pages|default(1) > page|default(1) %}
-        <div class="sn-load-more">
-            <a class="sn-load-btn" href="{{ url_for('index', page=page+1, sort=sort_by, source=source_filter, keyword=keyword, category=category_filter) if not showing_saved else url_for('saved_articles', page=page+1, sort=sort_by) }}">Show more stories →</a>
-        </div>
-        {% endif %}
-        {% else %}
-        <section class="sn-empty">
-            <p class="sn-empty-label">{% if keyword %}No results{% elif showing_saved %}Empty{% else %}No stories{% endif %}</p>
-            <h2>{% if keyword %}Nothing for "{{ keyword }}"{% elif showing_saved %}No saved stories yet{% else %}Your feed is empty{% endif %}</h2>
-            <p>{% if keyword %}Try a different search term.{% elif showing_saved %}Save stories from the feed to find them here.{% else %}Hit Refresh to pull the latest stories.{% endif %}</p>
-            {% if not showing_saved and not keyword %}
-            <form method="POST" action="{{ url_for('index') }}">
-                <input type="hidden" name="refresh" value="true">
-                <button class="sn-btn-primary">Refresh feed</button>
-            </form>
+                </article>
+                {% endfor %}
+            {% else %}
+                <p style="color: var(--text-secondary); margin-top: 2rem;">No stories found matching your criteria.</p>
             {% endif %}
-        </section>
-        {% endif %}
+        </div>
     </main>
 
-    <!-- Drawer — slide-over panel -->
-    <div class="sn-drawer-overlay" id="drawerOverlay" aria-hidden="true"></div>
-    <aside class="sn-drawer" id="summaryDrawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" aria-hidden="true">
-        <div class="sn-drawer-head">
-            <div><p class="sn-eyebrow">Quick read</p><h2 id="drawerTitle">Loading…</h2><p class="sn-drawer-meta" id="drawerMeta"></p></div>
-            <button class="modal-close" data-drawer-close aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    <!-- 3. Quick Read Drawer (Replaces old generic Modal) -->
+    <div id="drawerOverlay" class="sn-modal-overlay"></div>
+    <aside id="quickReadDrawer" class="sn-modal-drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+        <header class="sn-drawer-header">
+            <div class="sn-drawer-title-group">
+                <div class="sn-drawer-kicker">Quick Read</div>
+                <h2 id="drawerTitle" class="sn-drawer-title"></h2>
+            </div>
+            <button id="drawerCloseBtn" class="sn-drawer-close" aria-label="Close panel">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </header>
+        <div id="drawerContent" class="sn-drawer-content">
+            <!-- Summary inserted here via JS -->
+            <div class="sn-loader">Fetching summary...</div>
         </div>
-        <div class="sn-drawer-body" id="drawerBody"></div>
-        <div class="sn-drawer-foot"><a id="drawerLink" href="#" target="_blank" rel="noopener" class="sn-btn-primary" hidden>Read full article →</a><button class="sn-btn-ghost" data-drawer-close>Close</button></div>
+        <footer class="sn-drawer-footer">
+            <a id="drawerLink" href="#" target="_blank" rel="noopener" class="sn-btn sn-btn-primary">Read full article</a>
+        </footer>
     </aside>
 
-    <div class="toast-container" id="toastContainer" aria-live="polite"></div>
-    <button class="scroll-top" id="scrollTop" aria-label="Back to top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg></button>
-    <script src="/static/js/app.js"></script>
+    <script>
+        // Drawer & Quick Read Logic
+        const drawer = document.getElementById('quickReadDrawer');
+        const overlay = document.getElementById('drawerOverlay');
+        const closeBtn = document.getElementById('drawerCloseBtn');
+        const titleEl = document.getElementById('drawerTitle');
+        const contentEl = document.getElementById('drawerContent');
+        const linkEl = document.getElementById('drawerLink');
+
+        function openDrawer(title, url) {
+            titleEl.textContent = title;
+            linkEl.href = url;
+            contentEl.innerHTML = '<div class="sn-loader" style="display:block">Synthesizing intelligence...</div>';
+            drawer.classList.add('is-open');
+            overlay.classList.add('is-open');
+            document.body.style.overflow = 'hidden'; // Prevent background scrolling
+
+            // Fetch summary
+            fetch('/api/summarize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({ url: url, title: title })
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('Failed to summarize');
+                return res.json();
+            })
+            .then(data => {
+                let html = `<p style="margin-bottom: 1.5rem">${data.summary || data.dek || data.excerpt}</p>`;
+                if (data.bullets && data.bullets.length) {
+                    html += `<ul class="sn-bullet-list">`;
+                    data.bullets.forEach(b => html += `<li class="sn-bullet-item">${b}</li>`);
+                    html += `</ul>`;
+                }
+                contentEl.innerHTML = html;
+            })
+            .catch(err => {
+                contentEl.innerHTML = `<p style="color:var(--accent-crimson)">Failed to load summary. The source may be blocking automated access.</p>`;
+            });
+        }
+
+        function closeDrawer() {
+            drawer.classList.remove('is-open');
+            overlay.classList.remove('is-open');
+            document.body.style.overflow = '';
+        }
+
+        closeBtn.addEventListener('click', closeDrawer);
+        overlay.addEventListener('click', closeDrawer);
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && drawer.classList.contains('is-open')) closeDrawer();
+        });
+
+        // Event delegation for actions
+        document.addEventListener('click', e => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            
+            const action = btn.dataset.action;
+            
+            if (action === 'summary') {
+                e.preventDefault();
+                openDrawer(btn.dataset.title, btn.dataset.url);
+            } 
+            else if (action === 'bookmark') {
+                e.preventDefault();
+                const id = btn.dataset.id;
+                fetch('/bookmark', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+                    body: `article_id=${id}`
+                })
+                .then(r => r.json())
+                .then(d => {
+                    const saved = d.status === 'saved';
+                    btn.setAttribute('aria-pressed', saved);
+                    btn.textContent = saved ? 'Saved' : 'Save';
+                });
+            }
+        });
+    </script>
 </body>
 </html>
