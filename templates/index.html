@@ -39,6 +39,12 @@
                     <input type="hidden" name="category" value="{{ category_filter|default('all') }}">
                     <input type="hidden" name="sort" value="{{ sort_by|default('score') }}">
                 </form>
+
+                <form id="scrapeForm" method="POST" action="{{ url_for('index') }}" style="margin-left: 8px;">
+                    <input type="hidden" name="refresh" value="true">
+                    <input type="hidden" name="pages" value="1">
+                    <button type="submit" class="sn-btn sn-btn-primary">Refresh / Scrape</button>
+                </form>
             </div>
         </div>
     </nav>
