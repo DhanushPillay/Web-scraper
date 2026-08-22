@@ -109,37 +109,44 @@
             {% if articles %}
                 {% for article in articles %}
                 <article class="sn-article" id="article-{{ article.id }}">
-                    <div class="sn-article-meta-top">
-                        {% if article.category and article.category!='General' %}
-                            <span class="sn-article-category">{{ article.category }}</span>
-                        {% endif %}
-                        <span>{{ article.read_time or 3 }} MIN READ</span>
-                        <span>{{ article.time|humanize_time }}</span>
-                    </div>
-                    
-                    <h2 class="sn-article-title">
-                        <a href="{{ article.link }}" target="_blank" rel="noopener">{{ article.title }}</a>
-                    </h2>
-                    
-                    {% if article.dek or article.excerpt %}
-                        <p class="sn-article-excerpt">{{ article.dek or article.excerpt }}</p>
-                    {% endif %}
-
-                    <div class="sn-article-footer">
-                        <div class="sn-source-tag">
-                            <span class="sn-source-dot" data-src="{{ article.source }}"></span>
-                            {{ article.source }}
-                            <span style="opacity: 0.5; margin-left: 8px;">{{ article.score|default(0) }} pts</span>
+                    <div class="sn-article-content">
+                        <div class="sn-article-meta-top">
+                            {% if article.category and article.category!='General' %}
+                                <span class="sn-article-category">{{ article.category }}</span>
+                            {% endif %}
+                            <span>{{ article.read_time or 3 }} MIN READ</span>
+                            <span>{{ article.time|humanize_time }}</span>
                         </div>
                         
-                        <div class="sn-article-actions">
-                            <button class="sn-btn sn-btn-ghost" data-action="summary" data-url="{{ article.link }}" data-title="{{ article.title }}">Quick read</button>
-                            <button class="sn-btn sn-btn-ghost" data-action="bookmark" data-id="{{ article.id }}" aria-pressed="{{ 'true' if article.is_saved else 'false' }}">
-                                {{ 'Saved' if article.is_saved else 'Save' }}
-                            </button>
-                            <a class="sn-btn sn-btn-primary" href="{{ article.link }}" target="_blank" rel="noopener">Open →</a>
+                        <h2 class="sn-article-title">
+                            <a href="{{ article.link }}" target="_blank" rel="noopener">{{ article.title }}</a>
+                        </h2>
+                        
+                        {% if article.dek or article.excerpt %}
+                            <p class="sn-article-excerpt">{{ article.dek or article.excerpt }}</p>
+                        {% endif %}
+
+                        <div class="sn-article-footer">
+                            <div class="sn-source-tag">
+                                <span class="sn-source-dot" data-src="{{ article.source }}"></span>
+                                {{ article.source }}
+                                <span style="opacity: 0.5; margin-left: 8px;">{{ article.score|default(0) }} pts</span>
+                            </div>
+                            
+                            <div class="sn-article-actions">
+                                <button class="sn-btn sn-btn-ghost" data-action="summary" data-url="{{ article.link }}" data-title="{{ article.title }}">Quick read</button>
+                                <button class="sn-btn sn-btn-ghost" data-action="bookmark" data-id="{{ article.id }}" aria-pressed="{{ 'true' if article.is_saved else 'false' }}">
+                                    {{ 'Saved' if article.is_saved else 'Save' }}
+                                </button>
+                                <a class="sn-btn sn-btn-primary" href="{{ article.link }}" target="_blank" rel="noopener">Open →</a>
+                            </div>
                         </div>
                     </div>
+                    {% if article.image_url %}
+                    <a href="{{ article.link }}" target="_blank" rel="noopener" class="sn-article-media">
+                        <img src="{{ article.image_url }}" alt="Thumbnail for {{ article.title }}" loading="lazy" onerror="this.style.display='none'">
+                    </a>
+                    {% endif %}
                 </article>
                 {% endfor %}
             {% else %}
