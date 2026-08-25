@@ -1,0 +1,3 @@
+-r requirements.txt
+nltk==3.9.1
+sumy>=0.11.0

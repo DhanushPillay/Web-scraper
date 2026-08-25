@@ -20,9 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download NLTK data during build
-RUN python -c "import nltk; [nltk.download(r, quiet=True) for r in ['punkt', 'punkt_tab', 'vader_lexicon', 'stopwords']]"
-
+# Download NLTK data during build (removed)
 # Copy project
 COPY . .
 

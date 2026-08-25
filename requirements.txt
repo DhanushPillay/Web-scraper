@@ -2,10 +2,8 @@ flask==3.0.3
 requests==2.32.3
 beautifulsoup4==4.12.3
 aiohttp==3.10.10
-nltk==3.9.1
 urllib3==2.3.0
 feedparser==6.0.11
-apscheduler==3.10.4
 gunicorn==21.2.0
 
 # Security hardening
@@ -20,7 +18,6 @@ psycopg2-binary==2.9.10
 # Summarization (replaces newspaper3k)
 trafilatura>=2.0.0
 lxml>=5.0.0
-sumy>=0.11.0
 lxml_html_clean>=0.1.0
 
 # Data lake — Parquet + warehouse + config

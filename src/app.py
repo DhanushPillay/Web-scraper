@@ -26,7 +26,6 @@ from flask.typing import ResponseReturnValue
 from web_scraper import NewsAggregator
 from database import Database
 from pipeline.enrich import enrich_batch as _enrich_batch
-import nltk
 
 # Security extensions
 try:
@@ -48,46 +47,9 @@ try:
 except ImportError:
     _cors_available = False
 
-# Attempt to import optional dependencies
-try:
-    from nltk.sentiment.vader import SentimentIntensityAnalyzer
-    _vader_available = True
-except (ImportError, LookupError):
-    _vader_available = False
-
-try:
-    from apscheduler.schedulers.background import BackgroundScheduler
-    _scheduler_available = True
-except ImportError:
-    _scheduler_available = False
-
 logger = logging.getLogger(__name__)
 
-# Ensure NLTK data is downloaded (lazy, non-blocking)
-def ensure_nltk_data():
-    """Download NLTK data if missing. Called on first use, not at import."""
-    for resource in ['tokenizers/punkt', 'tokenizers/punkt_tab',
-                     'sentiment/vader_lexicon', 'corpora/stopwords']:
-        try:
-            nltk.data.find(resource)
-        except LookupError:
-            nltk.download(resource.split('/')[-1], quiet=True)
-
 app = Flask(__name__)
-
-# Defer NLTK download — call lazily on first sentiment/stopwords use
-# ponytail: avoids blocking startup / network fail on import; will download on demand
-_nltk_ensured = False
-
-def _ensure_nltk_once():
-    global _nltk_ensured
-    if _nltk_ensured:
-        return
-    try:
-        ensure_nltk_data()
-    except Exception as e:
-        logger.warning(f"NLTK data ensure failed: {e}")
-    _nltk_ensured = True
 
 
 def _humanize_time(value: str) -> str:
@@ -579,173 +541,6 @@ def classify_article(title: str) -> str:
     return 'General'
 
 
-def estimate_read_time(title: str, excerpt: str = '') -> int:
-    """Estimates read time from excerpt length when available, else title.
-    ponytail: simple word-count proxy; upgrade to real content length when full body stored."""
-    text = excerpt.strip() if excerpt and excerpt.strip() else title
-    word_count = len(text.split())
-    # avg 200 wpm, tech article 400-800 words => 2-4 min plus overhead
-    if word_count > 80:
-        return 7
-    elif word_count > 40:
-        return 5
-    elif word_count > 20:
-        return 4
-    return 3
-
-
-# ──────────────────────────────────────────────
-# Sentiment Analysis (cached singleton)
-# ──────────────────────────────────────────────
-
-_sia = None
-
-def _get_sia():
-    global _sia
-    if not _vader_available:
-        return None
-    if _sia is None:
-        _ensure_nltk_once()
-        try:
-            _sia = SentimentIntensityAnalyzer()
-        except Exception:
-            return None
-    return _sia
-
-def analyze_sentiment(title: str) -> dict:
-    """Uses VADER to analyze sentiment of a title."""
-    sia = _get_sia()
-    if sia is None:
-        return {'label': 'neutral', 'score': 0.0}
-
-    try:
-        scores = sia.polarity_scores(title)
-        compound = scores['compound']
-
-        if compound >= 0.05:
-            label = 'positive'
-        elif compound <= -0.05:
-            label = 'negative'
-        else:
-            label = 'neutral'
-
-        return {'label': label, 'score': compound}
-    except Exception:
-        return {'label': 'neutral', 'score': 0.0}
-
-
-# ──────────────────────────────────────────────
-# Trending Topics (TF-IDF-like word frequency)
-# ──────────────────────────────────────────────
-
-STOP_WORDS: Optional[set] = None
-
-def _get_stop_words() -> set:
-    global STOP_WORDS
-    if STOP_WORDS is not None:
-        return STOP_WORDS
-    _ensure_nltk_once()
-    try:
-        from nltk.corpus import stopwords
-        base = set(stopwords.words('english'))
-    except LookupError:
-        base = set()
-    base.update({
-        'new', 'says', 'first', 'get', 'one', 'two', 'could', 'would', 'also',
-        'may', 'use', 'using', 'make', 'like', 'much', 'now', 'just',
-        'want', 'still', 'year', 'years', 'going', 'big', 'best', 'way',
-    })
-    STOP_WORDS = base
-    return STOP_WORDS
-
-
-def extract_trending_topics(titles: list[str], limit: int = 10) -> list[dict]:
-    """Extracts trending topics from article titles using word frequency."""
-    # ponytail: single-pass, keep unigrams and bigrams separate so neither starves the other
-    stop_words = _get_stop_words()
-    uni_counts: Counter = Counter()
-    bi_counts: Counter = Counter()
-
-    for title in titles:
-        words = re.findall(r'[a-zA-Z]{3,}', title.lower())
-        meaningful = [w for w in words if w not in stop_words and len(w) > 2]
-        uni_counts.update(meaningful)
-        for i in range(len(meaningful) - 1):
-            bigram = f"{meaningful[i]} {meaningful[i + 1]}"
-            bi_counts[bigram] += 1
-
-    topics = []
-    for word, count in uni_counts.most_common(limit):
-        if count >= 2:
-            topics.append({'topic': word, 'count': count, 'kind': 'word'})
-    # Add top bigrams interleaved, still respecting limit
-    for phrase, count in bi_counts.most_common(limit):
-        if count >= 2 and len(topics) < limit and phrase not in {t['topic'] for t in topics}:
-            topics.append({'topic': phrase, 'count': count, 'kind': 'phrase'})
-    # Sort by count desc and trim
-    topics.sort(key=lambda x: x['count'], reverse=True)
-    for t in topics:
-        t.pop('kind', None)
-    return topics[:limit]
-
-
-# ──────────────────────────────────────────────
-# Background Processing
-# ──────────────────────────────────────────────
-
-def process_articles_metadata(batch_size: int = 100):
-    """Background job: assigns sentiment, category, and read time to unprocessed articles."""
-    total = 0
-    while True:
-        unprocessed = db.get_unprocessed_articles(limit=batch_size)
-        if not unprocessed:
-            break
-        processed_at = time.time()
-        for article in unprocessed:
-            title = article.get('title', '')
-            excerpt = article.get('excerpt', '')
-            sentiment = analyze_sentiment(title)
-            category = classify_article(title)
-            read_time = estimate_read_time(title, excerpt)
-
-            db.update_article_metadata(
-                article_id=article['id'],
-                sentiment=sentiment['label'],
-                sentiment_score=sentiment['score'],
-                category=category,
-                read_time=read_time,
-                metadata_processed_at=processed_at
-            )
-        total += len(unprocessed)
-        logger.info(f"Processed metadata for {len(unprocessed)} articles ({total} total this run)")
-        if len(unprocessed) < batch_size:
-            break
-    if total:
-        logger.info(f"Finished metadata processing: {total} articles")
-
-
-def background_scrape():
-    """Background job: scrapes all sources and saves to DB."""
-    logger.info("[Scheduler] Running background scrape...")
-    try:
-        agg = get_aggregator()
-        agg.scrape_all(hn_pages=1, force=True)
-        new_articles = agg.get_articles()
-        if new_articles:
-            try:
-                new_articles = _enrich_batch(new_articles, fetch=False)
-            except Exception as e:
-                logger.warning(f"Enrich failed: {e}")
-            db.add_articles(new_articles)
-            db.upsert_images(new_articles)
-            logger.info(f"[Scheduler] Added {len(new_articles)} articles")
-            # Process metadata for new articles
-            process_articles_metadata()
-            _stats_cache['data'] = None
-    except Exception as e:
-        logger.error(f"[Scheduler] Scrape failed: {e}")
-
-
 # ──────────────────────────────────────────────
 # Routes
 # ──────────────────────────────────────────────
@@ -835,8 +630,6 @@ def index():
                     logger.warning(f"Enrich failed: {e}")
                 db.add_articles(new_articles)
                 db.upsert_images(new_articles)
-                # Process metadata for new articles
-                process_articles_metadata()
                 _stats_cache['data'] = None
             else:
                 logger.info("Querying existing data...")
@@ -942,8 +735,7 @@ def api_scrape():
         completed += 1
 
         # Step N+3: Process metadata
-        yield f"data: {_json.dumps({'stage': 'Processing metadata...', 'progress': int(completed / total_steps * 100)})}\n\n"
-        process_articles_metadata()
+        yield f"data: {_json.dumps({'stage': 'Finishing...', 'progress': int(completed / total_steps * 100)})}\n\n"
         _stats_cache['data'] = None
         agg._last_scrape_time = time.time()
         completed += 1
@@ -1282,71 +1074,6 @@ def manifest():
 @app.route('/service-worker.js')
 def service_worker():
     return app.send_static_file('service-worker.js')
-
-
-# ──────────────────────────────────────────────
-# Start Background Scheduler
-# ──────────────────────────────────────────────
-
-scheduler = None
-
-
-def stop_scheduler() -> None:
-    global scheduler
-    if scheduler and scheduler.running:
-        scheduler.shutdown(wait=False)
-        logger.info("Background scheduler stopped")
-
-
-def start_scheduler() -> None:
-    """Starts scheduler once and avoids duplicate startup in debug reloader."""
-    global scheduler
-
-    if not _scheduler_available:
-        logger.warning("APScheduler not available. Background scraping disabled.")
-        return
-
-    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
-    if debug_mode and os.getenv('WERKZEUG_RUN_MAIN') != 'true':
-        return
-
-    if scheduler and scheduler.running:
-        return
-
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(background_scrape, 'interval', minutes=15, id='scrape_job',
-                      replace_existing=True, max_instances=1)
-    scheduler.start()
-    atexit.register(stop_scheduler)
-    logger.info("Background scheduler started (scraping every 15 minutes)")
-
-
-def _init_background_tasks():
-    """Lazy init — call explicitly, not at import."""
-    # ponytail: avoid import side-effects, call from create_app or __main__
-    is_render = os.getenv('RENDER') is not None
-    try:
-        process_articles_metadata()
-        if not is_render:
-            start_scheduler()
-        else:
-            logger.info("Render detected — background scheduler disabled. Use manual Refresh.")
-    except Exception as e:
-        logger.error(f"Failed to initialize scheduler or process metadata: {e}")
-
-# Only auto-init when not under test and not imported as library
-if os.getenv('SNIFFER_NO_AUTO_INIT') != '1':
-    # Defer slightly but still allow gunicorn workers to init without blocking import
-    # Use app.before_request would be better; for now init once after first request
-    @app.before_request
-    def _lazy_init_once():
-        # run once
-        if not getattr(app, '_sniffer_inited', False):
-            app._sniffer_inited = True
-            try:
-                _init_background_tasks()
-            except Exception:
-                pass
 
 
 # ──────────────────────────────────────────────

@@ -24,20 +24,33 @@ class Database:
         self._pg_pool = None
 
         if self._use_postgres:
-            try:
-                self._init_pg_pool()
-                # Test connection upfront
-                conn = self._pg_pool.getconn()
-                self._pg_pool.putconn(conn)
-            except Exception as e:
-                logger.error(f"PostgreSQL connection failed: {e}. Falling back to SQLite WAL mode.")
-                self._use_postgres = False
-                if self._pg_pool:
-                    try:
-                        self._pg_pool.closeall()
-                    except Exception:
-                        pass
-                self._pg_pool = None
+            for attempt in range(1, 4):
+                try:
+                    self._init_pg_pool()
+                    # Test connection upfront
+                    conn = self._pg_pool.getconn()
+                    self._pg_pool.putconn(conn)
+                    break
+                except Exception as e:
+                    if attempt < 3:
+                        logger.warning(f"PostgreSQL connection failed (attempt {attempt}): {e}. Retrying in {2 ** attempt}s...")
+                        time.sleep(2 ** attempt)
+                        # Reset pool for next attempt
+                        if self._pg_pool:
+                            try:
+                                self._pg_pool.closeall()
+                            except Exception:
+                                pass
+                        self._pg_pool = None
+                    else:
+                        logger.error(f"PostgreSQL connection failed after 3 attempts: {e}. Falling back to SQLite WAL mode.")
+                        self._use_postgres = False
+                        if self._pg_pool:
+                            try:
+                                self._pg_pool.closeall()
+                            except Exception:
+                                pass
+                        self._pg_pool = None
 
         self.init_db()
 
