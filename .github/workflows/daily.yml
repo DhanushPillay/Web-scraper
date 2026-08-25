@@ -26,6 +26,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -r requirements-actions.txt
           pip install pytest
 
       - name: Run Pytest Suite
@@ -56,6 +57,7 @@ jobs:
       - name: Install dependencies & PySpark
         run: |
           pip install -r requirements.txt
+          pip install -r requirements-actions.txt
           pip install pyspark==3.5.1 pyarrow duckdb pandas pyyaml
 
       - name: Download NLTK Tokenizers
