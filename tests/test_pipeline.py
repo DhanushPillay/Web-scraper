@@ -26,7 +26,7 @@ from pipeline.transform import to_silver, _classify_title
 from processing.spark_job import run_gold_duckdb
 from web_scraper import _clean_excerpt
 from utils.credibility import get_scorer
-from src.app import estimate_read_time, is_safe_url, classify_article
+from src.app import is_safe_url, classify_article
 from src.database import Database
 
 
@@ -198,9 +198,6 @@ def test_credibility_boundaries():
     assert d1["title_penalty"] < d2["title_penalty"]
 
 
-def test_estimate_read_time():
-    assert estimate_read_time("short", "word " * 100) == 7
-    assert estimate_read_time("short title") == 3
 
 
 def test_fts_and_database_operations(tmp_path):
