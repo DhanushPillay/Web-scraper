@@ -121,6 +121,16 @@ class Database:
         finally:
             conn.close()
 
+    def _row_to_dict(self, cursor, row) -> Dict[str, Any]:
+        """Safely converts a database row to a dictionary."""
+        if hasattr(row, 'keys') and callable(getattr(row, 'keys')):
+            try:
+                return dict(row)
+            except (TypeError, ValueError):
+                pass
+        cols = [col[0] for col in cursor.description]
+        return dict(zip(cols, row))
+
     def init_db(self) -> None:
         """Initializes the database table and ensures schema is up to date."""
         with self.get_connection() as conn:
@@ -401,7 +411,7 @@ class Database:
 
             results = []
             for row in rows:
-                d = dict(row)
+                d = self._row_to_dict(cursor, row)
                 d['time'] = d['time_posted']
                 # parse bullets JSON
                 try:
@@ -492,7 +502,7 @@ class Database:
             rows = cursor.fetchall()
             results = []
             for row in rows:
-                d = dict(row)
+                d = self._row_to_dict(cursor, row)
                 d['time'] = d['time_posted']
                 try:
                     b = d.get('bullets')
@@ -589,7 +599,7 @@ class Database:
                 ORDER BY created_at DESC LIMIT {ph}
             ''', (limit,))
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            return [self._row_to_dict(cursor, row) for row in rows]
 
     # ──────────────────────────────────────────────
     # Statistics & Analytics
@@ -654,7 +664,7 @@ class Database:
                 (twenty_four_hours_ago,)
             )
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            return [self._row_to_dict(cursor, row) for row in rows]
 
     def get_articles_per_day(self, days: int = 7) -> List[Dict[str, Any]]:
         """Returns article counts grouped by day for the chart."""
@@ -734,7 +744,7 @@ class Database:
 
             results = []
             for row in rows:
-                d = dict(row)
+                d = self._row_to_dict(cursor, row)
                 d['time'] = d['time_posted']
                 try:
                     b = d.get('bullets')
