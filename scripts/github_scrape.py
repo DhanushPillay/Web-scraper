@@ -42,7 +42,9 @@ def main():
         logger.error("DATABASE_URL not set in environment!")
         sys.exit(1)
         
-    db = Database(db_uri)
+    # Database reads DATABASE_URL itself.  Do not pass a connection URI as the
+    # SQLite fallback filename in case PostgreSQL is temporarily unavailable.
+    db = Database()
     agg = NewsAggregator()
     
     # Scrape with deep fetch (will use sumy and trafilatura)

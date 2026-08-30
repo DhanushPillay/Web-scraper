@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self, db_name: str = "sniffer.db") -> None:
-        self.db_name = db_name
+        # PostgreSQL is configured through DATABASE_URL.  A few callers used to
+        # pass that URL as ``db_name``; keep the SQLite fallback a real local
+        # filename instead of trying to open a URL as a filesystem path.
+        self.db_name = (
+            "sniffer.db"
+            if str(db_name).startswith(("postgres://", "postgresql://"))
+            else db_name
+        )
         self._use_postgres = bool(os.getenv("DATABASE_URL"))
         self._pg_pool = None
 
@@ -73,6 +80,14 @@ class Database:
                 if self._pg_pool is None:
                     self._init_pg_pool()
                 conn = self._pg_pool.getconn()
+            except Exception as e:
+                logger.error(f"PostgreSQL connection error: {e}. Falling back to SQLite.")
+                self._use_postgres = False
+                self._pg_pool = None
+            else:
+                # Only connection-acquisition failures should fall back to
+                # SQLite.  SQL errors need to surface to the caller; treating
+                # them as connection failures masks the real problem.
                 conn.autocommit = False
                 try:
                     yield conn
@@ -87,10 +102,6 @@ class Database:
                     if self._pg_pool:
                         self._pg_pool.putconn(conn)
                 return
-            except Exception as e:
-                logger.error(f"PostgreSQL connection error: {e}. Falling back to SQLite.")
-                self._use_postgres = False
-                self._pg_pool = None
 
         # SQLite fallback
         conn = sqlite3.connect(self.db_name, timeout=15)
@@ -109,6 +120,12 @@ class Database:
             cursor = conn.cursor()
 
             if self._use_postgres:
+                # ``CREATE TABLE IF NOT EXISTS`` is not safe when multiple
+                # web/worker processes initialize a brand-new PostgreSQL
+                # schema concurrently.  The transaction-scoped advisory lock
+                # serializes the DDL across GitHub Actions and web instances.
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", (734010592,))
+
                 # PostgreSQL schema
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS articles (
