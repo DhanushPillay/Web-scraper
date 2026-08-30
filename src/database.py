@@ -66,7 +66,7 @@ class Database:
         if self._pg_pool is None:
             import psycopg2
             from psycopg2.extras import RealDictCursor
-            from psycopg2.pool import SimpleConnectionPool
+            from psycopg2.pool import ThreadedConnectionPool
             dsn = os.getenv("DATABASE_URL", "").strip()
             # Render provides postgres://... but psycopg2 requires postgresql://
             if dsn.startswith("postgres://"):
@@ -75,8 +75,8 @@ class Database:
             # convert rows with dict(row).  PostgreSQL cursors return tuples by
             # default, unlike SQLite's Row objects, so use dictionary cursors
             # consistently for both backends.
-            self._pg_pool = SimpleConnectionPool(
-                1, 5, dsn, cursor_factory=RealDictCursor
+            self._pg_pool = ThreadedConnectionPool(
+                1, 10, dsn, cursor_factory=RealDictCursor
             )
 
     @contextmanager
