@@ -131,6 +131,13 @@ class Database:
         cols = [col[0] for col in cursor.description]
         return dict(zip(cols, row))
 
+    def _fetch_scalar(self, cursor) -> Any:
+        """Safely fetches a single scalar value from the first column of the next row."""
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return list(self._row_to_dict(cursor, row).values())[0]
+
     def init_db(self) -> None:
         """Initializes the database table and ensures schema is up to date."""
         with self.get_connection() as conn:
@@ -448,7 +455,7 @@ class Database:
                 params.append(category)
 
             cursor.execute(query, params)
-            return cursor.fetchone()[0]
+            return self._fetch_scalar(cursor)
 
     # ──────────────────────────────────────────────
     # Full-Text Search
@@ -609,7 +616,7 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM articles")
-            return cursor.fetchone()[0]
+            return self._fetch_scalar(cursor)
 
     def get_stats(self) -> Dict[str, Any]:
         """Returns statistics about articles in the database."""
@@ -617,18 +624,18 @@ class Database:
             cursor = conn.cursor()
 
             cursor.execute("SELECT COUNT(*) FROM articles")
-            total = cursor.fetchone()[0]
+            total = self._fetch_scalar(cursor)
 
             twenty_four_hours_ago = time.time() - (24 * 60 * 60)
             ph = self._ph_one()
             cursor.execute(f"SELECT COUNT(*) FROM articles WHERE created_at >= {ph}", (twenty_four_hours_ago,))
-            today = cursor.fetchone()[0]
+            today = self._fetch_scalar(cursor)
 
             cursor.execute("SELECT COUNT(*) FROM articles WHERE is_saved = 1")
-            saved = cursor.fetchone()[0]
+            saved = self._fetch_scalar(cursor)
 
             cursor.execute("SELECT COUNT(*) FROM articles WHERE is_read = 1")
-            read_count = cursor.fetchone()[0]
+            read_count = self._fetch_scalar(cursor)
 
             cursor.execute("SELECT source, COUNT(*) as count FROM articles GROUP BY source")
             by_source_rows = cursor.fetchall()
