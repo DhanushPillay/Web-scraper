@@ -754,7 +754,12 @@ def api_scrape():
         completed += 1
 
         # Done
-        total_count = db.get_total_count()
+        try:
+            total_count = db.get_total_count()
+        except Exception as e:
+            logger.exception(f"Scrape total-count failed: {e}")
+            yield f"data: {_json.dumps({'stage': f'Error finishing: {e}', 'progress': 100, 'error': True})}\n\n"
+            return
         yield f"data: {_json.dumps({'stage': 'Done', 'progress': 100, 'total': total_count})}\n\n"
 
     return Response(stream_with_context(generate()),

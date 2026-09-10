@@ -29,14 +29,18 @@ class Database:
         )
         self._use_postgres = bool(os.getenv("DATABASE_URL"))
         self._pg_pool = None
+        self._pool_pid = None
 
         if self._use_postgres:
             for attempt in range(1, 4):
                 try:
                     self._init_pg_pool()
-                    # Test connection upfront
+                    # Test-only connection: close immediately so no live
+                    # socket survives a gunicorn fork into workers (shared
+                    # sockets surface as `SSL: decryption failed` errors).
                     conn = self._pg_pool.getconn()
-                    self._pg_pool.putconn(conn)
+                    conn.close()
+                    self._reset_pg_pool()
                     break
                 except Exception as e:
                     if attempt < 3:
@@ -61,16 +65,27 @@ class Database:
 
         self.init_db()
 
+    @staticmethod
+    def _normalize_dsn(dsn: str) -> str:
+        """Normalizes DATABASE_URL for psycopg2 on Neon."""
+        if dsn.startswith("postgres://"):
+            dsn = dsn.replace("postgres://", "postgresql://", 1)
+        # Neon PgBouncer (-pooler) + psycopg2 + channel_binding=require is
+        # flaky through transaction pooling; `prefer` keeps TLS
+        # (sslmode=require untouched) without hard-failing the handshake.
+        if "-pooler" in dsn and "channel_binding=require" in dsn:
+            dsn = dsn.replace("channel_binding=require", "channel_binding=prefer")
+        if "connect_timeout" not in dsn:
+            dsn += ("&" if "?" in dsn else "?") + "connect_timeout=10"
+        return dsn
+
     def _init_pg_pool(self) -> None:
         """Initializes the PostgreSQL connection pool."""
         if self._pg_pool is None:
             import psycopg2
             from psycopg2.extras import RealDictCursor
             from psycopg2.pool import ThreadedConnectionPool
-            dsn = os.getenv("DATABASE_URL", "").strip()
-            # Render provides postgres://... but psycopg2 requires postgresql://
-            if dsn.startswith("postgres://"):
-                dsn = dsn.replace("postgres://", "postgresql://", 1)
+            dsn = self._normalize_dsn(os.getenv("DATABASE_URL", "").strip())
             # All query methods use mapping-style row access (row['title']) or
             # convert rows with dict(row).  PostgreSQL cursors return tuples by
             # default, unlike SQLite's Row objects, so use dictionary cursors
@@ -80,6 +95,7 @@ class Database:
                 keepalives=1, keepalives_idle=30,
                 keepalives_interval=10, keepalives_count=5,
             )
+            self._pool_pid = os.getpid()
 
     def _reset_pg_pool(self) -> None:
         """Drops all pooled connections so the next request reconnects fresh."""
@@ -89,6 +105,7 @@ class Database:
             except Exception:
                 pass
         self._pg_pool = None
+        self._pool_pid = None
 
     def _is_pg_conn_error(self, e: Exception) -> bool:
         """True for stale/broken connection errors (safe to discard the pool)."""
@@ -101,6 +118,10 @@ class Database:
     def get_connection(self):
         """Context manager that auto-closes the DB connection with automatic fallback."""
         if self._use_postgres:
+            # Gunicorn forks workers after import: a pool inherited across
+            # processes shares sockets and breaks SSL. Reset on PID change.
+            if self._pg_pool is not None and self._pool_pid != os.getpid():
+                self._reset_pg_pool()
             try:
                 if self._pg_pool is None:
                     self._init_pg_pool()
