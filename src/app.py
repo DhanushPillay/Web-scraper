@@ -680,8 +680,13 @@ def api_scrape():
     """
     def generate():
         import json as _json
-        agg = get_aggregator()
-        scrapers = agg.scrapers
+        try:
+            agg = get_aggregator()
+            scrapers = agg.scrapers
+        except Exception as e:
+            logger.exception(f"Scrape init failed: {e}")
+            yield f"data: {_json.dumps({'stage': f'Error: {e}', 'progress': 100, 'error': True})}\n\n"
+            return
         total_steps = len(scrapers) + 3  # scrapers + enrich + db_save + metadata
         completed = 0
 
@@ -714,13 +719,16 @@ def api_scrape():
                 deduped.append(a)
         agg.articles = deduped
 
-        # Step N+1: Image enrichment
+        # Step N+1: Image enrichment (skipped on Render free tier — OOM risk)
         yield f"data: {_json.dumps({'stage': 'Fetching thumbnails...', 'progress': int(completed / total_steps * 100)})}\n\n"
-        try:
-            import asyncio
-            asyncio.run(agg._enrich_images_async())
-        except Exception as e:
-            logger.warning(f"Image enrichment failed: {e}")
+        if os.getenv('RENDER'):
+            logger.info("Skipping image enrichment on Render free tier.")
+        else:
+            try:
+                import asyncio
+                asyncio.run(agg._enrich_images_async())
+            except Exception as e:
+                logger.warning(f"Image enrichment failed: {e}")
         completed += 1
 
         # Step N+2: Enrich + save to DB
@@ -730,8 +738,13 @@ def api_scrape():
             new_articles = _enrich_batch(new_articles, fetch=False)
         except Exception as e:
             logger.warning(f"Enrich failed: {e}")
-        db.add_articles(new_articles)
-        db.upsert_images(new_articles)
+        try:
+            db.add_articles(new_articles)
+            db.upsert_images(new_articles)
+        except Exception as e:
+            logger.exception(f"Scrape DB save failed: {e}")
+            yield f"data: {_json.dumps({'stage': f'Error saving: {e}', 'progress': 100, 'error': True})}\n\n"
+            return
         completed += 1
 
         # Step N+3: Process metadata

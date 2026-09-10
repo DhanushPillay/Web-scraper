@@ -291,6 +291,12 @@
                 // Stream real progress from backend via SSE
                 fetch('/api/scrape', { method: 'POST' })
                 .then(response => {
+                    const ctype = response.headers.get('content-type') || '';
+                    if (!response.ok || !ctype.includes('text/event-stream')) {
+                        return response.json().catch(() => ({})).then(d => {
+                            throw new Error(d.message || d.error || ('Scrape failed (' + response.status + ')'));
+                        });
+                    }
                     const reader = response.body.getReader();
                     const decoder = new TextDecoder();
                     let buffer = '';
@@ -320,6 +326,9 @@
                                             scrapeFill.style.width = '100%';
                                             scrapePct.textContent = '100%';
                                         }
+                                        if (evt.error) {
+                                            throw new Error(evt.stage || 'Scrape failed');
+                                        }
                                     } catch (_) {}
                                 }
                             }
@@ -329,8 +338,8 @@
                     return pump();
                 })
                 .catch(err => {
-                    scrapeStage.textContent = 'Scrape failed — reloading...';
-                    setTimeout(() => { window.location.href = '/'; }, 1500);
+                    scrapeStage.textContent = 'Scrape failed: ' + (err.message || 'unknown error');
+                    setTimeout(() => { window.location.href = '/'; }, 2500);
                 });
             });
         }

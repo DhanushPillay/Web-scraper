@@ -76,8 +76,26 @@ class Database:
             # default, unlike SQLite's Row objects, so use dictionary cursors
             # consistently for both backends.
             self._pg_pool = ThreadedConnectionPool(
-                1, 10, dsn, cursor_factory=RealDictCursor
+                1, 10, dsn, cursor_factory=RealDictCursor,
+                keepalives=1, keepalives_idle=30,
+                keepalives_interval=10, keepalives_count=5,
             )
+
+    def _reset_pg_pool(self) -> None:
+        """Drops all pooled connections so the next request reconnects fresh."""
+        if self._pg_pool is not None:
+            try:
+                self._pg_pool.closeall()
+            except Exception:
+                pass
+        self._pg_pool = None
+
+    def _is_pg_conn_error(self, e: Exception) -> bool:
+        """True for stale/broken connection errors (safe to discard the pool)."""
+        msg = f"{type(e).__name__}: {e}".lower()
+        markers = ("ssl", "connection", "server closed", "broken pipe",
+                   "terminating connection", "could not connect", "timeout")
+        return any(m in msg for m in markers)
 
     @contextmanager
     def get_connection(self):
@@ -99,15 +117,28 @@ class Database:
                 try:
                     yield conn
                     conn.commit()
-                except Exception:
+                except Exception as e:
                     try:
                         conn.rollback()
                     except Exception:
                         pass
+                    # Stale/killed connections (e.g. gunicorn SIGKILL + Neon
+                    # pooler) must not go back into the pool — discard the
+                    # whole pool so the next request reconnects fresh.
+                    if self._is_pg_conn_error(e):
+                        logger.error(f"PostgreSQL connection lost mid-query: {e}. Resetting pool.")
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        self._reset_pg_pool()
                     raise
                 finally:
-                    if self._pg_pool:
-                        self._pg_pool.putconn(conn)
+                    if self._pg_pool is not None:
+                        try:
+                            self._pg_pool.putconn(conn)
+                        except Exception:
+                            self._reset_pg_pool()
                 return
 
         # SQLite fallback
