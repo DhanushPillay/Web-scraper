@@ -415,6 +415,22 @@ class Database:
                 conn.commit()
                 logger.info(f"Enriched {cursor.rowcount} article images in DB.")
 
+    def prune_old_articles(self, max_age_days: int = 2) -> int:
+        """Deletes non-saved articles older than max_age_days. Returns rows removed."""
+        cutoff = time.time() - (max_age_days * 24 * 60 * 60)
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            ph = self._ph_one()
+            cursor.execute(
+                f"DELETE FROM articles WHERE created_at < {ph} AND is_saved = 0",
+                (cutoff,),
+            )
+            removed = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+            conn.commit()
+            if removed:
+                logger.info(f"Pruned {removed} articles older than {max_age_days}d.")
+            return removed
+
     # ──────────────────────────────────────────────
     # Query Operations (with pagination)
     # ──────────────────────────────────────────────

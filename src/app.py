@@ -630,6 +630,10 @@ def index():
                     logger.warning(f"Enrich failed: {e}")
                 db.add_articles(new_articles)
                 db.upsert_images(new_articles)
+                try:
+                    db.prune_old_articles(max_age_days=int(os.getenv('RETENTION_DAYS', '2')))
+                except Exception as e:
+                    logger.warning(f"Prune failed: {e}")
                 _stats_cache['data'] = None
             else:
                 logger.info("Querying existing data...")
@@ -745,6 +749,14 @@ def api_scrape():
             logger.exception(f"Scrape DB save failed: {e}")
             yield f"data: {_json.dumps({'stage': f'Error saving: {e}', 'progress': 100, 'error': True})}\n\n"
             return
+        try:
+            retention = int(os.getenv('RETENTION_DAYS', '2'))
+        except ValueError:
+            retention = 2
+        try:
+            db.prune_old_articles(max_age_days=retention)
+        except Exception as e:
+            logger.warning(f"Prune failed: {e}")
         completed += 1
 
         # Step N+3: Process metadata

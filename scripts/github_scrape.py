@@ -56,6 +56,12 @@ def main():
         new_articles = _enrich_batch(new_articles, fetch=True)
         db.add_articles(new_articles)
         db.upsert_images(new_articles)
+        try:
+            retention = int(os.environ.get('RETENTION_DAYS', '2'))
+        except ValueError:
+            retention = 2
+        removed = db.prune_old_articles(max_age_days=retention)
+        logger.info(f"Pruned {removed} articles older than {retention}d.")
         logger.info(f"Successfully added {len(new_articles)} new articles to DB.")
         
         # Process metadata for unprocessed articles
