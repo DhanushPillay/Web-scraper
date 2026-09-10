@@ -13,3 +13,9 @@ services:
         value: "false"
       - key: RENDER
         value: "true"
+      - key: SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: HF_DATASET
+        sync: false

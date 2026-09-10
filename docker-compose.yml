@@ -5,7 +5,6 @@ services:
     build: .
     ports:
       - "7860:7860"
-    env_file: .env
     environment:
       - DATABASE_URL=${DATABASE_URL:-}
       - HF_DATASET=${HF_DATASET:-}
@@ -14,11 +13,15 @@ services:
       - ./data:/app/data
     restart: unless-stopped
 
-  # run pipeline manually: docker compose run --rm pipeline python pipeline/run.py
+  # run pipeline manually: docker compose run --rm pipeline
   pipeline:
     build: .
-    entrypoint: ["python", "pipeline/run.py"]
+    entrypoint: ["python", "src/pipeline/run.py"]
+    environment:
+      - PYTHONPATH=/app/src
+      - DATABASE_URL=${DATABASE_URL:-}
+      - HF_DATASET=${HF_DATASET:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     volumes:
       - ./data:/app/data
       - ./configs:/app/configs
-    env_file: .env
