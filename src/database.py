@@ -381,7 +381,7 @@ class Database:
                      is_saved, is_read, sentiment, sentiment_score, category, read_time,
                      metadata_processed_at, excerpt, image_url, dek, bullets)
                     VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph},
-                            0, 0, 'neutral', 0.0, 'general', 0, NULL, {ph}, {ph}, {ph}, {ph})
+                            0, 0, 'neutral', 0.0, {ph}, 0, NULL, {ph}, {ph}, {ph}, {ph})
                     ON CONFLICT (link) DO NOTHING
                 ''', [
                     (
@@ -389,6 +389,7 @@ class Database:
                         a.get('author', 'Unknown'), a.get('time', 'Unknown'),
                         a.get('comments', '0'), a.get('source', 'Unknown'),
                         time.time(),
+                        (a.get('category') or 'General'),
                         a.get('excerpt', ''),
                         a.get('image_url', ''),
                         a.get('dek', ''),

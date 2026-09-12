@@ -1,131 +1,252 @@
-/** Sniffer — drawer + interactions (compact row layout) */
-const $ = (s,c=document)=>c.querySelector(s);
-const $$ = (s,c=document)=>[...c.querySelectorAll(s)];
+/** Sniffer — drawer + SSE scrape + interactions (single source, XSS-safe) */
+const $ = (s, c = document) => c.querySelector(s);
 
-const icons={
-  saved:'<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
-  bookmark:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
-  read:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12l5 5L20 7"/></svg>',
-  unread:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 12l2 2 4-4"/></svg>'
-};
+const summaryCache = new Map();
+let lastFocus = null;
 
-function toast(msg,type='success'){
-  const c=$('#toastContainer'); if(!c) return;
-  const el=document.createElement('div');
-  el.className=`toast${type==='error'?' toast-error':''}`;
-  el.textContent=msg; c.append(el);
-  setTimeout(()=>el.remove(),3200);
+function toast(msg, type = 'success') {
+  const c = $('#toastContainer');
+  if (!c) return;
+  const el = document.createElement('div');
+  el.className = `toast${type === 'error' ? ' toast-error' : ''}`;
+  el.textContent = msg;
+  c.append(el);
+  setTimeout(() => el.remove(), 3200);
 }
-async function request(url,opts={}){
-  const r=await fetch(url,{headers:{'Content-Type':'application/json',...opts.headers},...opts});
-  const d=await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.message||d.error||'Something went wrong'); return d;
-}
-function setActionState(btn,active,type){
-  btn.classList.toggle('is-active',active);
-  btn.setAttribute('aria-pressed',String(active));
-  const isBook=type==='bookmark';
-  btn.title=isBook?(active?'Remove from saved':'Save'):(active?'Mark unread':'Mark read');
-  const svg=btn.querySelector('svg'); if(svg) svg.remove();
-  btn.insertAdjacentHTML('afterbegin', isBook?(active?icons.saved:icons.bookmark):(active?icons.read:icons.unread));
-}
-async function toggleArticleState(btn,action){
-  const card=btn.closest('[data-article-id]'); if(!card||btn.disabled) return;
-  btn.disabled=true;
-  try{
-    const ep=action==='bookmark'?'/bookmark':'/toggle_read';
-    const d=await request(ep,{method:'POST',body:JSON.stringify({article_id:Number(card.dataset.articleId)})});
-    const active=d.status===(action==='bookmark'?'saved':'read');
-    setActionState(btn,active,action);
-    if(action==='read') card.classList.toggle('is-read',active);
-    toast(active?(action==='bookmark'?'Saved':'Marked read'):(action==='bookmark'?'Removed':'Marked unread'));
-  }catch(e){ toast(e.message||'Could not update','error'); } finally{ btn.disabled=false; }
-}
+window.toast = toast;
 
-// Drawer
-function openDrawer(){
-  const d=$('#summaryDrawer'), o=$('#drawerOverlay');
-  d?.classList.add('show'); o?.classList.add('show');
-  d?.setAttribute('aria-hidden','false'); o?.setAttribute('aria-hidden','false');
-  document.body.style.overflow='hidden';
-  setTimeout(()=> $('[data-drawer-close]',d)?.focus(), 10);
-}
-function closeDrawer(){
-  const d=$('#summaryDrawer'), o=$('#drawerOverlay');
-  d?.classList.remove('show'); o?.classList.remove('show');
-  d?.setAttribute('aria-hidden','true'); o?.setAttribute('aria-hidden','true');
-  document.body.style.overflow='';
-}
-// legacy compat
-function openSummary(){ openDrawer(); }
-function closeSummary(){ closeDrawer(); }
-
-async function summarizeArticle(url, titleHint){
-  const body=$('#drawerBody'), title=$('#drawerTitle'), meta=$('#drawerMeta'), link=$('#drawerLink');
-  if(!body||!title) return;
-  title.textContent=titleHint||'Quick read'; meta.textContent='Fetching…';
-  body.innerHTML='<div class="sn-summary-loading"><span></span><p>Extracting summary…</p></div>';
-  if(link){ link.hidden=true; link.href=url; }
-  openDrawer();
-  try{
-    const d=await request('/api/summarize',{method:'POST',body:JSON.stringify({url})});
-    title.textContent=d.title||titleHint||'Quick read';
-    meta.textContent=`${d.read_time||3} min · ${d.word_count||''} words`.replace('  ',' ');
-    const frag=document.createDocumentFragment();
-    if(d.dek){
-      const dekEl=document.createElement('p'); dekEl.className='sn-drawer-dek'; dekEl.textContent=d.dek; frag.append(dekEl);
-    }
-    if(d.bullets && d.bullets.length){
-      const ul=document.createElement('ul'); ul.className='sn-drawer-bullets';
-      d.bullets.forEach(b=>{ const li=document.createElement('li'); li.textContent=b; ul.append(li); });
-      frag.append(ul);
-    } else if(d.summary){
-      const p=document.createElement('p'); p.textContent=d.summary; frag.append(p);
-    }
-    body.replaceChildren(frag);
-    if(link){ link.href=url; link.hidden=false; }
-  }catch(e){
-    body.textContent=e.message||'Unable to summarize — try opening the article directly.';
+async function request(url, opts = {}, timeoutMs = 12000) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...(opts.headers || {}) },
+      ...opts,
+      signal: ctrl.signal,
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.message || d.error || 'Something went wrong');
+    return d;
+  } finally {
+    clearTimeout(id);
   }
 }
 
-function initScrollTop(){
-  const b=$('#scrollTop'); if(!b) return;
-  const upd=()=>b.classList.toggle('visible', window.scrollY>350);
-  window.addEventListener('scroll',upd,{passive:true}); b.addEventListener('click',()=>window.scrollTo({top:0,behavior:'smooth'})); upd();
+function openDrawer() {
+  const d = $('#summaryDrawer'), o = $('#drawerOverlay');
+  if (!d) return;
+  lastFocus = document.activeElement;
+  d.classList.add('is-open');
+  o?.classList.add('is-open');
+  d.setAttribute('aria-hidden', 'false');
+  o?.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => $('[data-drawer-close]', d)?.focus(), 20);
 }
-function initKeys(){
-  document.addEventListener('keydown',e=>{
-    const typing=['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName);
-    if(e.key==='/'&&!typing){ e.preventDefault(); $('#searchInput')?.focus(); }
-    if(e.key==='Escape') closeDrawer();
+
+function closeDrawer() {
+  const d = $('#summaryDrawer'), o = $('#drawerOverlay');
+  d?.classList.remove('is-open');
+  o?.classList.remove('is-open');
+  d?.setAttribute('aria-hidden', 'true');
+  o?.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  if (lastFocus?.focus) lastFocus.focus();
+}
+
+async function summarizeArticle(url, titleHint) {
+  const body = $('#drawerBody'), title = $('#drawerTitle'), meta = $('#drawerMeta'), link = $('#drawerLink');
+  if (!body || !title) return;
+  title.textContent = titleHint || 'Quick read';
+  if (meta) meta.textContent = 'Fetching…';
+  body.replaceChildren(Object.assign(document.createElement('div'), { className: 'sn-loader', textContent: 'Extracting summary…' }));
+  if (link) { link.hidden = true; link.href = url; }
+  openDrawer();
+  try {
+    let d = summaryCache.get(url);
+    if (!d) {
+      d = await request('/api/summarize', { method: 'POST', body: JSON.stringify({ url }) }, 15000);
+      summaryCache.set(url, d);
+    }
+    title.textContent = d.title || titleHint || 'Quick read';
+    if (meta) meta.textContent = `${d.read_time || 3}-min quick read`;
+    const frag = document.createDocumentFragment();
+    if (d.dek) {
+      const p = document.createElement('p');
+      p.className = 'sn-drawer-dek';
+      p.textContent = d.dek;
+      frag.append(p);
+    } else if (d.summary) {
+      const p = document.createElement('p');
+      p.className = 'sn-drawer-dek';
+      p.textContent = d.summary;
+      frag.append(p);
+    }
+    const pts = (d.bullets || []).filter((b) => b && b !== d.dek).slice(0, 3);
+    if (pts.length) {
+      const label = document.createElement('div');
+      label.className = 'sn-drawer-label';
+      label.textContent = 'Key points';
+      frag.append(label);
+      const ul = document.createElement('ul');
+      ul.className = 'sn-drawer-bullets';
+      pts.slice(0, 2).forEach((b) => {
+        const li = document.createElement('li');
+        li.textContent = b;
+        ul.append(li);
+      });
+      frag.append(ul);
+      if (pts[2]) {
+        const why = document.createElement('div');
+        why.className = 'sn-why';
+        const wl = document.createElement('div');
+        wl.className = 'sn-drawer-label';
+        wl.textContent = 'Why it matters';
+        const wp = document.createElement('p');
+        wp.textContent = pts[2];
+        why.append(wl, wp);
+        frag.append(why);
+      }
+    }
+    if (!frag.childNodes.length) frag.append(Object.assign(document.createElement('p'), { textContent: 'Could not extract a summary.' }));
+    body.replaceChildren(frag);
+    if (link) { link.href = url; link.hidden = false; }
+  } catch (e) {
+    body.replaceChildren(Object.assign(document.createElement('p'), { textContent: e.message || 'Unable to summarize — try opening the article directly.' }));
+  }
+}
+
+function initScrapeSSE() {
+  const form = $('#scrapeForm');
+  const overlay = $('#scrapeOverlay');
+  const stage = $('#scrapeStage');
+  const fill = $('#scrapeProgressFill');
+  const pct = $('#scrapePct');
+  if (!form || !overlay) return;
+  let target = 0;
+  let raf = 0;
+  const paint = () => {
+    if (!fill) return;
+    const cur = parseFloat(fill.style.width) || 0;
+    const next = cur + (target - cur) * 0.2;
+    fill.style.width = `${Math.abs(target - next) < 0.5 ? target : next}%`;
+    if (pct) pct.textContent = `${Math.round(parseFloat(fill.style.width) || 0)}%`;
+    if (Math.abs(target - cur) > 0.5) raf = requestAnimationFrame(paint);
+  };
+  const setProgress = (p) => {
+    target = p;
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(paint);
+  };
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    overlay.classList.add('show');
+    if (stage) stage.textContent = 'Connecting to sources...';
+    setProgress(0);
+    try {
+      const res = await fetch('/api/scrape', { method: 'POST' });
+      const ctype = res.headers.get('content-type') || '';
+      if (!res.ok || !ctype.includes('text/event-stream')) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.message || d.error || `Scrape failed (${res.status})`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.stage && stage) stage.textContent = evt.stage === 'Done' ? `Done — ${evt.total || ''} stories loaded` : evt.stage;
+            if (evt.progress !== undefined) setProgress(evt.progress);
+            if (evt.error) throw new Error(evt.stage || 'Scrape failed');
+          } catch (_) { /* keep streaming */ }
+        }
+      }
+      setProgress(100);
+      setTimeout(() => { window.location.href = '/'; }, 400);
+    } catch (err) {
+      if (stage) stage.textContent = `Scrape failed: ${err.message || 'unknown error'}`;
+      setTimeout(() => { window.location.href = '/'; }, 2500);
+    }
   });
 }
 
-document.addEventListener('DOMContentLoaded',()=>{
-  $('#scrapeForm')?.addEventListener('submit',()=>{
-    const o=$('#loadingOverlay'), p=$('#loadingProgress'); o?.classList.add('show');
-    if(!p) return;
-    const steps=[[2000,'Scanning sources…'],[6000,'Processing stories…'],[12000,'Almost done…']];
-    const s=Date.now();
-    const id=setInterval(()=>{
-      const e=Date.now()-s;
-      for(const[ms,t] of steps) if(e>=ms) p.textContent=t;
-      if(e>=16000) clearInterval(id);
-    },800);
+function initReveal() {
+  const els = document.querySelectorAll('.reveal');
+  if (!els.length) return;
+  if (!('IntersectionObserver' in window)) { els.forEach((el) => el.classList.add('is-in')); return; }
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((en, i) => {
+      if (en.isIntersecting) {
+        en.target.style.transitionDelay = `${Math.min(i * 60, 180)}ms`;
+        en.target.classList.add('is-in');
+        io.unobserve(en.target);
+      }
+    });
+  }, { threshold: 0.08 });
+  els.forEach((el) => io.observe(el));
+}
+
+function initScrollTop() {
+  const b = $('#scrollTop');
+  if (!b) return;
+  let ticking = false;
+  const upd = () => {
+    b.classList.toggle('visible', window.scrollY > 350);
+    ticking = false;
+  };
+  window.addEventListener('scroll', () => {
+    if (!ticking) { ticking = true; requestAnimationFrame(upd); }
+  }, { passive: true });
+  b.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+  upd();
+}
+
+function initKeys() {
+  document.addEventListener('keydown', (e) => {
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+    if (e.key === '/' && !typing) { e.preventDefault(); $('#searchInput')?.focus(); }
+    if (e.key === 'Escape') closeDrawer();
   });
-  document.addEventListener('click',e=>{
-    const a=e.target.closest('[data-action]');
-    if(a){
-      const t=a.dataset.action;
-      if(t==='bookmark'||t==='read') toggleArticleState(a,t);
-      if(t==='summary') summarizeArticle(a.dataset.url, a.dataset.title||a.closest('[data-article-id]')?.querySelector('.sn-row-title, .sn-featured-title')?.textContent?.trim());
-      return;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('click', async (e) => {
+    const closer = e.target.closest('[data-drawer-close]');
+    if (closer) { closeDrawer(); return; }
+    if (e.target.id === 'drawerOverlay') { closeDrawer(); return; }
+    const a = e.target.closest('[data-action]');
+    if (!a) return;
+    const t = a.dataset.action;
+    if (t === 'summary') {
+      e.preventDefault();
+      const card = a.closest('[data-article-id]');
+      const fallback = card?.querySelector('.sn-article-title')?.textContent?.trim();
+      summarizeArticle(a.dataset.url, a.dataset.title || fallback);
+    } else if (t === 'bookmark') {
+      e.preventDefault();
+      const id = Number(a.dataset.id || a.closest('[data-article-id]')?.dataset.articleId);
+      if (!id || a.disabled) return;
+      a.disabled = true;
+      try {
+        const d = await request('/bookmark', { method: 'POST', body: JSON.stringify({ article_id: id }) });
+        const saved = d.status === 'saved';
+        a.setAttribute('aria-pressed', String(saved));
+        a.textContent = saved ? 'Saved' : 'Save';
+        toast(saved ? 'Saved' : 'Removed');
+      } catch (err) { toast(err.message || 'Could not update', 'error'); }
+      finally { a.disabled = false; }
     }
-    if(e.target.closest('[data-drawer-close]')) closeDrawer();
-    if(e.target===$('#drawerOverlay')) closeDrawer();
-    // legacy
-    if(e.target.closest('[data-modal-close]')) closeDrawer();
-    if(e.target===$('#summaryModal')) closeDrawer();
   });
-  initScrollTop(); initKeys();
+  initScrapeSSE();
+  initReveal();
+  initScrollTop();
+  initKeys();
 });

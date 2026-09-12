@@ -248,6 +248,10 @@ def get_aggregator() -> NewsAggregator:
 _stats_cache: dict = {'data': None, 'ts': 0.0}
 _STATS_TTL = 60
 
+# Summary cache (1h TTL) — avoids refetch + re-extract on repeat Quick reads
+_summary_cache: dict = {}
+_SUMMARY_TTL = 3600
+
 def _get_gold_stats():
     """Try to serve stats from Gold layer (Parquet via DuckDB) — ponytail: falls back to DB."""
     try:
@@ -541,6 +545,17 @@ def classify_article(title: str) -> str:
     return 'General'
 
 
+def _ensure_categories(articles: list[dict]) -> list[dict]:
+    """Fills missing category via classify_article so topic filters match."""
+    for a in articles:
+        try:
+            if not (a.get('category') or '').strip() or (a.get('category') or '').strip().lower() == 'general':
+                a['category'] = classify_article(a.get('title', '') or '')
+        except Exception:
+            a.setdefault('category', 'General')
+    return articles
+
+
 # ──────────────────────────────────────────────
 # Routes
 # ──────────────────────────────────────────────
@@ -626,6 +641,7 @@ def index():
                 new_articles = agg.get_articles()
                 try:
                     new_articles = _enrich_batch(new_articles, fetch=False)
+                    new_articles = _ensure_categories(new_articles)
                 except Exception as e:
                     logger.warning(f"Enrich failed: {e}")
                 db.add_articles(new_articles)
@@ -740,6 +756,7 @@ def api_scrape():
         new_articles = agg.get_articles()
         try:
             new_articles = _enrich_batch(new_articles, fetch=False)
+            new_articles = _ensure_categories(new_articles)
         except Exception as e:
             logger.warning(f"Enrich failed: {e}")
         try:
@@ -900,21 +917,28 @@ def summarize() -> ResponseReturnValue:
     if not is_safe_url(url):
         return jsonify({'error': 'URL not allowed'}), 400
 
+    now = time.time()
+    cached = _summary_cache.get(url)
+    if cached and (now - cached['ts']) < _SUMMARY_TTL:
+        out = dict(cached['data'])
+        out['cached'] = True
+        return jsonify(out)
+
     try:
         import trafilatura
         import requests as _req
         # Fetch via requests so SSRF redirect chain can be validated
         try:
-            resp = _req.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True)
+            resp = _req.get(url, timeout=(4, 6), headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True)
             if resp.status_code != 200:
                 return jsonify({'error': 'Failed to fetch URL'}), 500
             # Validate final URL after redirects
             if not is_safe_url(resp.url):
                 return jsonify({'error': 'URL not allowed after redirect'}), 400
-            downloaded = resp.text
+            downloaded = resp.text[:500000]
         except Exception:
             # Fallback to trafilatura's fetcher
-            downloaded = trafilatura.fetch_url(url, timeout=10)
+            downloaded = trafilatura.fetch_url(url, timeout=6)
         if not downloaded:
             return jsonify({'error': 'Failed to fetch URL'}), 500
 
@@ -954,21 +978,22 @@ def summarize() -> ResponseReturnValue:
         if not full_text:
             return jsonify({'error': 'Could not extract content'}), 500
 
-        # Enrich to dek + bullets (free, offline)
+        # Enrich to dek + bullets (free, offline) — cap input for speed
         from pipeline.enrich import _make_dek, _extractive_bullets
-        dek = _make_dek(full_text, title)
-        bullets = _extractive_bullets(full_text, 3)
+        short_text = full_text[:20000]
+        dek = _make_dek(short_text, title)
+        bullets = _extractive_bullets(short_text, 3, exclude=dek)
         # ensure not empty
         if not bullets:
             # fallback single
-            bullets = [full_text[:220].rsplit(" ",1)[0] + "…"] if len(full_text) > 220 else [full_text[:220]]
+            bullets = [short_text[:220].rsplit(" ",1)[0] + "…"] if len(short_text) > 220 else [short_text[:220]]
         # read_time
         words = len(full_text.split())
         read_time = max(1, round(words / 225))
         # legacy summary for compat = dek + bullets joined
         summary = dek + (" " + " ".join(bullets) if bullets else "")
 
-        return jsonify({
+        payload = {
             'title': title,
             'dek': dek,
             'bullets': bullets,
@@ -976,7 +1001,12 @@ def summarize() -> ResponseReturnValue:
             'top_image': image,
             'read_time': read_time,
             'word_count': words,
-        })
+            'cached': False,
+        }
+        if len(_summary_cache) > 500:
+            _summary_cache.clear()
+        _summary_cache[url] = {'ts': time.time(), 'data': payload}
+        return jsonify(payload)
     except Exception as e:
         logger.warning(f"Failed to summarize {url}: {e}")
         return jsonify({'error': f"Failed to summarize: {str(e)}"}), 500

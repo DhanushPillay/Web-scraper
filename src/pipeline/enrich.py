@@ -13,39 +13,61 @@ def _split_sentences(text: str) -> List[str]:
     parts = re.split(r"(?<=[.!?])\s+", text)
     return [p.strip() for p in parts if len(p.strip()) > 20]
 
-def _extractive_bullets(text: str, n: int = 3) -> List[str]:
+def _normalize_sentence(s: str) -> str:
+    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"(\d+)\s*percent", r"\1%", s, flags=re.I)
+    s = s.replace(" -- ", " — ").replace(" - ", " — ")
+    if s and s[0].islower():
+        s = s[0].upper() + s[1:]
+    return s
+
+def _toks(s: str):
+    return set(re.findall(r"[a-zA-Z]{4,}", s.lower()))
+
+def _jaccard(a: str, b: str) -> float:
+    ta, tb = _toks(a), _toks(b)
+    if not ta or not tb:
+        return 1.0 if a[:30] == b[:30] else 0.0
+    return len(ta & tb) / len(ta | tb)
+
+def _extractive_bullets(text: str, n: int = 3, exclude: str = "") -> List[str]:
     if not text or len(text.split()) < 30:
         return []
-    try:
-        # sumy path
-        from sumy.parsers.plaintext import PlaintextParser
-        from sumy.nlp.tokenizers import Tokenizer
-        from sumy.summarizers.lsa import LsaSummarizer
-        from sumy.nlp.stemmers import Stemmer
-        from sumy.utils import get_stop_words
+    # Fast path first: TF-IDF-ish scoring, no heavy deps.
+    # Opt-in to sumy LSA via SNIFFER_USE_SUMY=1 (slower, needs nltk data).
+    import os
+    if os.getenv("SNIFFER_USE_SUMY") == "1":
+        try:
+            from sumy.parsers.plaintext import PlaintextParser
+            from sumy.nlp.tokenizers import Tokenizer
+            from sumy.summarizers.lsa import LsaSummarizer
+            from sumy.nlp.stemmers import Stemmer
+            from sumy.utils import get_stop_words
 
-        parser = PlaintextParser.from_string(text, Tokenizer("english"))
-        stemmer = Stemmer("english")
-        summ = LsaSummarizer(stemmer)
-        summ.stop_words = get_stop_words("english")
-        sents = summ(parser.document, n)
-        bullets = [str(s).strip() for s in sents if str(s).strip()]
-        # ensure 12-18w each, truncate
-        out = []
-        for b in bullets:
-            w = b.split()
-            if len(w) > 22:
-                b = " ".join(w[:18]) + "…"
-            out.append(b)
-        if out:
-            return out[:n]
-    except Exception:
-        pass
+            parser = PlaintextParser.from_string(text[:20000], Tokenizer("english"))
+            stemmer = Stemmer("english")
+            summ = LsaSummarizer(stemmer)
+            summ.stop_words = get_stop_words("english")
+            sents = summ(parser.document, n)
+            bullets = [str(s).strip() for s in sents if str(s).strip()]
+            out = []
+            for b in bullets:
+                w = b.split()
+                if len(w) > 22:
+                    b = " ".join(w[:18]) + "…"
+                out.append(b)
+            if out:
+                return out[:n]
+        except Exception:
+            pass
 
     # fallback: TF-IDF-ish simple (sentence with most title words)
     sents = _split_sentences(text)
     if len(sents) <= n:
-        return sents[:n]
+        cleaned = [_normalize_sentence(s) for s in sents]
+        if exclude:
+            cleaned = [s for s in cleaned if _jaccard(s, exclude) < 0.55]
+        return cleaned[:n]
     # score by word frequency
     words = re.findall(r"[a-zA-Z]{4,}", text.lower())
     freq = {}
@@ -58,11 +80,24 @@ def _extractive_bullets(text: str, n: int = 3) -> List[str]:
         sc = sc / (1 + len(s.split()) / 25)
         scored.append((sc, s))
     scored.sort(reverse=True)
-    # dedup similar
+    # dedup similar + vs dek, enforce varied openings
     out = []
+    seen_openings = set()
     for _, s in scored:
-        if not any(s[:30] in o for o in out):
-            out.append(s)
+        s = _normalize_sentence(s)
+        if exclude and (_jaccard(s, exclude) > 0.55 or s[:30] in exclude or exclude[:30] in s):
+            continue
+        if any(_jaccard(s, o) > 0.55 for o in out):
+            continue
+        opening = " ".join(s.split()[:3]).lower()
+        if opening in seen_openings:
+            continue
+        seen_openings.add(opening)
+        w = s.split()
+        if len(w) > 22:
+            cut = " ".join(w[:18]).rsplit(",", 1)[0].rsplit(";", 1)[0]
+            s = cut + "…"
+        out.append(s)
         if len(out) >= n:
             break
     return out
@@ -77,8 +112,8 @@ def _make_dek(text: str, title: str = "") -> str:
     for s in sents:
         w = len(s.split())
         if 12 <= w <= 32 and s.lower() not in title.lower():
-            return s
-    return sents[0][:160]
+            return _normalize_sentence(s)
+    return _normalize_sentence(sents[0][:160])
 
 def enrich_article(article: Dict, fetch: bool = False) -> Dict:
     """Add dek, bullets, read_time to article dict. Mutates copy."""
@@ -100,7 +135,7 @@ def enrich_article(article: Dict, fetch: bool = False) -> Dict:
             pass
 
     dek = _make_dek(body, title)
-    bullets = _extractive_bullets(body, 3)
+    bullets = _extractive_bullets(body, 3, exclude=dek)
     # ensure bullets not empty -> fallback to excerpt sentences
     if not bullets and excerpt:
         bullets = _split_sentences(excerpt)[:3]
