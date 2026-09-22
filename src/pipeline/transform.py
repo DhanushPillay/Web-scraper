@@ -41,22 +41,10 @@ def read_bronze_records(day: Optional[str] = None) -> List[Dict[str, Any]]:
     return articles
 
 
-def _classify_title(title: str) -> str:
-    """Classifies tech article title into broad domain category."""
-    try:
-        from app import classify_article
-        return classify_article(title)
-    except Exception:
-        t = (title or "").lower()
-        if any(w in t for w in ["ai", "llm", "gpt", "model", "neural", "deep learning"]):
-            return "AI & ML"
-        elif any(w in t for w in ["security", "hack", "cve", "breach", "vulnerability", "auth"]):
-            return "Security"
-        elif any(w in t for w in ["cloud", "aws", "docker", "k8s", "kubernetes", "infra"]):
-            return "Cloud & DevOps"
-        elif any(w in t for w in ["chip", "nvidia", "intel", "amd", "hardware", "cpu", "gpu"]):
-            return "Hardware"
-        return "general"
+from categories import classify_article
+
+# ponytail: single classifier (tests import this name)
+_classify_title = classify_article
 
 
 def to_silver(articles: List[Dict[str, Any]], day: Optional[str] = None) -> Optional[Path]:
@@ -111,6 +99,7 @@ def to_silver(articles: List[Dict[str, Any]], day: Optional[str] = None) -> Opti
             "excerpt": str(rec.get("excerpt", "")),
             "image_url": str(rec.get("image_url", "")),
             "dek": str(rec.get("dek", "")),
+            "bullets": json.dumps(rec.get("bullets") or [], ensure_ascii=False),
             "day": day,
         }
         normalized.append(normalized_rec)
