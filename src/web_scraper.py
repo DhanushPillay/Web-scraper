@@ -326,43 +326,34 @@ class HackerNewsScraper(BaseScraper):
         return articles
 
 
-class TechCrunchScraper(BaseScraper):
-    """Scraper for TechCrunch using RSS feed."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.feed_url: str = "https://techcrunch.com/feed/"
+class RssScraper(BaseScraper):
+    """Generic RSS scraper — one line per feed, not one class."""
+    feed_url: str = ""
+    source: str = ""
+    tag: str = "RSS"
+    limit: int = 25
+    default_author: str = ""
 
     def scrape(self, num_pages: int = 1) -> list[dict]:
         start = time.time()
         articles = []
-        logger.info("[TC] Starting RSS scrape...")
+        logger.info(f"[{self.tag}] Starting RSS scrape...")
         try:
             feed = _parse_feed(self.feed_url)
-            for entry in feed.entries[:25]:
-                author = "TechCrunch"
-                if hasattr(entry, 'author'):
-                    author = entry.author
-
-                time_posted = "Recent"
-                if hasattr(entry, 'published'):
-                    time_posted = entry.published
-
-                # Extract excerpt from RSS description/summary
+            for entry in feed.entries[:self.limit]:
                 excerpt = ""
                 if hasattr(entry, 'summary'):
                     excerpt = _clean_excerpt(entry.summary)
                 elif hasattr(entry, 'description'):
                     excerpt = _clean_excerpt(entry.description)
-
                 articles.append({
                     'title': entry.title,
                     'link': entry.link,
                     'score': 0,
-                    'author': author,
-                    'time': time_posted,
+                    'author': getattr(entry, 'author', self.default_author),
+                    'time': getattr(entry, 'published', 'Recent'),
                     'comments': '0',
-                    'source': 'TechCrunch',
+                    'source': self.source,
                     'excerpt': excerpt,
                     'image_url': _extract_feed_image(entry)
                 })
@@ -370,12 +361,48 @@ class TechCrunchScraper(BaseScraper):
         except Exception as e:
             self.last_status = "error"
             self.last_error = str(e)
-            logger.warning(f"[TC] Error: {e}")
+            logger.warning(f"[{self.tag}] Error: {e}")
 
         self.scrape_duration = time.time() - start
         self.last_scrape_time = time.time()
-        logger.info(f"[TC] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
+        logger.info(f"[{self.tag}] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
         return articles
+
+
+class TechCrunchScraper(RssScraper):
+    """Scraper for TechCrunch using RSS feed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.feed_url = "https://techcrunch.com/feed/"
+        self.source = "TechCrunch"
+        self.tag = "TC"
+        self.limit = 25
+        self.default_author = "TechCrunch"
+
+
+class TheVergeScraper(RssScraper):
+    """Scraper for The Verge using RSS feed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.feed_url = "https://www.theverge.com/rss/index.xml"
+        self.source = "The Verge"
+        self.tag = "Verge"
+        self.limit = 15
+        self.default_author = "The Verge Staff"
+
+
+class ArsTechnicaScraper(RssScraper):
+    """Scraper for Ars Technica using RSS feed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.feed_url = "https://feeds.arstechnica.com/arstechnica/index"
+        self.source = "Ars Technica"
+        self.tag = "Ars"
+        self.limit = 15
+        self.default_author = "Ars Staff"
 
 
 class RedditScraper(BaseScraper):
@@ -444,110 +471,6 @@ class RedditScraper(BaseScraper):
         self.scrape_duration = time.time() - start
         self.last_scrape_time = time.time()
         logger.info(f"[Reddit] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
-        return articles
-
-
-class TheVergeScraper(BaseScraper):
-    """Scraper for The Verge using RSS feed."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.feed_url: str = "https://www.theverge.com/rss/index.xml"
-
-    def scrape(self, num_pages: int = 1) -> list[dict]:
-        start = time.time()
-        articles = []
-        logger.info("[Verge] Starting RSS scrape...")
-        try:
-            feed = _parse_feed(self.feed_url)
-            for entry in feed.entries[:15]:
-                author = "The Verge Staff"
-                if hasattr(entry, 'author'):
-                    author = entry.author
-
-                time_posted = "Recent"
-                if hasattr(entry, 'published'):
-                    time_posted = entry.published
-
-                # Extract excerpt from RSS summary/description
-                excerpt = ""
-                if hasattr(entry, 'summary'):
-                    excerpt = _clean_excerpt(entry.summary)
-                elif hasattr(entry, 'description'):
-                    excerpt = _clean_excerpt(entry.description)
-
-                articles.append({
-                    'title': entry.title,
-                    'link': entry.link,
-                    'score': 0,
-                    'author': author,
-                    'time': time_posted,
-                    'comments': '0',
-                    'source': 'The Verge',
-                    'excerpt': excerpt,
-                    'image_url': _extract_feed_image(entry)
-                })
-            self.last_status = "ok"
-        except Exception as e:
-            self.last_status = "error"
-            self.last_error = str(e)
-            logger.warning(f"[Verge] Error: {e}")
-
-        self.scrape_duration = time.time() - start
-        self.last_scrape_time = time.time()
-        logger.info(f"[Verge] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
-        return articles
-
-
-class ArsTechnicaScraper(BaseScraper):
-    """Scraper for Ars Technica using RSS feed."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.feed_url: str = "https://feeds.arstechnica.com/arstechnica/index"
-
-    def scrape(self, num_pages: int = 1) -> list[dict]:
-        start = time.time()
-        articles = []
-        logger.info("[Ars] Starting RSS scrape...")
-        try:
-            feed = _parse_feed(self.feed_url)
-            for entry in feed.entries[:15]:
-                author = "Ars Staff"
-                if hasattr(entry, 'author'):
-                    author = entry.author
-
-                time_posted = "Recent"
-                if hasattr(entry, 'published'):
-                    time_posted = entry.published
-
-                # Extract excerpt from RSS summary/description
-                excerpt = ""
-                if hasattr(entry, 'summary'):
-                    excerpt = _clean_excerpt(entry.summary)
-                elif hasattr(entry, 'description'):
-                    excerpt = _clean_excerpt(entry.description)
-
-                articles.append({
-                    'title': entry.title,
-                    'link': entry.link,
-                    'score': 0,
-                    'author': author,
-                    'time': time_posted,
-                    'comments': '0',
-                    'source': 'Ars Technica',
-                    'excerpt': excerpt,
-                    'image_url': _extract_feed_image(entry)
-                })
-            self.last_status = "ok"
-        except Exception as e:
-            self.last_status = "error"
-            self.last_error = str(e)
-            logger.warning(f"[Ars] Error: {e}")
-
-        self.scrape_duration = time.time() - start
-        self.last_scrape_time = time.time()
-        logger.info(f"[Ars] Done. {len(articles)} articles in {self.scrape_duration:.1f}s")
         return articles
 
 
@@ -737,11 +660,12 @@ class NewsAggregator:
                         valid_articles.append(a)
                 self.articles.extend(valid_articles)
 
-        # Deduplicate by link across sources (keep first seen)
+        # Deduplicate by canonical link across sources (keep first seen)
+        from pipeline.ingest import canonical_link
         seen = set()
         deduped = []
         for a in self.articles:
-            link = a.get('link')
+            link = canonical_link(a.get('link', ''))
             if link and link not in seen:
                 seen.add(link)
                 deduped.append(a)
