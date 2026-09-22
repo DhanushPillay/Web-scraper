@@ -26,6 +26,7 @@ from flask.typing import ResponseReturnValue
 from web_scraper import NewsAggregator
 from database import Database
 from pipeline.enrich import enrich_batch as _enrich_batch
+from categories import classify_article, normalize_category_filter
 
 # Security extensions
 try:
@@ -53,53 +54,38 @@ app = Flask(__name__)
 
 
 def _humanize_time(value: str) -> str:
-    """Humanize ISO/relative time string for display (no AI slop raw ISO)."""
-    if not value or value.strip().lower() in ("recent", "recently", "today", "unknown"):
-        return value.strip() if value else "Today"
-    # Try ISO parse
+    """Humanize ISO/RFC time for display (no raw ISO in UI)."""
+    if not value:
+        return "Today"
+    v = value.strip()
+    if v.lower() in ("recent", "recently", "today", "unknown"):
+        return v
     try:
         from datetime import datetime, timezone
-        s = value.strip()
-        # Handle '2026-08-22T08:36:47Z' etc
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = None
-        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%a, %d %b %Y %H:%M:%S %z", "%Y-%m-%d %H:%M:%S"):
-            try:
-                dt = datetime.strptime(s[:25], fmt) if "%z" in fmt else datetime.strptime(s[:19], fmt)
-                if dt:
-                    break
-            except Exception:
-                continue
-        if dt is None:
-            # fromisoformat fallback
+        from email.utils import parsedate_to_datetime
+        s = v[:-1] + "+00:00" if v.endswith("Z") else v
+        try:
             dt = datetime.fromisoformat(s)
+        except ValueError:
+            dt = parsedate_to_datetime(v)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        delta = now - dt
-        secs = int(delta.total_seconds())
+        secs = int((datetime.now(timezone.utc) - dt).total_seconds())
         if secs < 0:
             return "Today"
         if secs < 60:
             return "now"
         if secs < 3600:
-            return f"{secs//60}m ago"
+            return f"{secs // 60}m ago"
         if secs < 86400:
-            return f"{secs//3600}h ago"
+            return f"{secs // 3600}h ago"
         if secs < 604800:
-            return f"{secs//86400}d ago"
+            return f"{secs // 86400}d ago"
         return dt.strftime("%b %d")
     except Exception:
-        # contains relative like "5 hours ago" — keep short
-        v = value.strip()
-        # shorten verbose
+        m = re.search(r"(\d+)\s*hour", v, re.IGNORECASE)
         if "hour" in v.lower():
-            try:
-                n = int("".join(c for c in v if c.isdigit()) or "1")
-                return f"{n}h ago"
-            except:
-                pass
+            return f"{m.group(1) if m else 1}h ago"
         return value[:16]
 
 
@@ -240,7 +226,6 @@ def get_aggregator() -> NewsAggregator:
     """Return shared NewsAggregator (per-process singleton)."""
     global _aggregator_instance
     if _aggregator_instance is None:
-        from web_scraper import NewsAggregator
         _aggregator_instance = NewsAggregator()
     return _aggregator_instance
 
@@ -252,67 +237,43 @@ _STATS_TTL = 60
 _summary_cache: dict = {}
 _SUMMARY_TTL = 3600
 
+def _gold_shape(data: dict) -> dict:
+    """Normalize Gold daily_stats.json (writes total_articles) to DB stats shape."""
+    total = data.get("total_articles", data.get("total", 0))
+    return {"total": total, "today": total, "saved": 0, "read": 0,
+            "by_source": data.get("by_source", {}), "by_category": data.get("by_category", {}),
+            "by_sentiment": {}}
+
+
 def _get_gold_stats():
-    """Try to serve stats from Gold layer (Parquet via DuckDB) — ponytail: falls back to DB."""
+    """Serve stats from Gold layer (Parquet via DuckDB) — falls back to DB."""
     try:
-        from pathlib import Path
-        import json as _json
         from datetime import datetime, timezone
+        from pathlib import Path
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        gold_json = Path(f"data/gold/{day}/daily_stats.json")
-        # legacy slash fallback
-        if not gold_json.exists():
-            alt = Path(f"data/gold/{day.replace('-', '/')}/daily_stats.json")
-            if alt.exists():
-                gold_json = alt
-                day = day.replace("-", "/")
-        if gold_json.exists():
-            data = _json.loads(gold_json.read_text(encoding="utf-8"))
-            # normalize to DB shape for template
-            return {
-                "total": data.get("total", 0),
-                "today": data.get("total", 0),
-                "saved": 0,  # gold doesn't track bookmarks
-                "read": 0,
-                "by_source": data.get("by_source", {}),
-                "by_category": data.get("by_category", {}),
-                "by_sentiment": {},
-            }
-        # Try DuckDB on Parquet (if gold was written as parquet)
+        for d in (day, day.replace("-", "/")):
+            p = Path(f"data/gold/{d}/daily_stats.json")
+            if p.exists():
+                return _gold_shape(json.loads(p.read_text(encoding="utf-8")))
+        hf_dataset = os.getenv("HF_DATASET", "").strip()
+        if hf_dataset:
+            try:
+                from huggingface_hub import hf_hub_download
+                p = hf_hub_download(repo_id=hf_dataset, filename=f"{day}/daily_stats.json", repo_type="dataset")
+                return _gold_shape(json.loads(Path(p).read_text(encoding="utf-8")))
+            except Exception:
+                pass
         try:
             import duckdb
-            gold_parquet = Path("data/gold")
-            if gold_parquet.exists() and any(gold_parquet.rglob("*.parquet")):
-                # query latest gold
-                con = duckdb.connect()
+            if Path("data/gold").exists() and any(Path("data/gold").rglob("*.parquet")):
                 # ponytail: DuckDB reads hive-partitioned parquet directly
-                q = con.execute("SELECT source, count(*) as c FROM read_parquet('data/gold/**/*.parquet', hive_partitioning=1) GROUP BY source").fetchall()
+                q = duckdb.query("SELECT source, count(*) c FROM read_parquet('data/gold/**/*.parquet', hive_partitioning=1) GROUP BY source").fetchall()
                 by_source = {r[0]: r[1] for r in q}
-                con.close()
                 if by_source:
                     total = sum(by_source.values())
                     return {"total": total, "today": total, "saved": 0, "read": 0, "by_source": by_source, "by_category": {}, "by_sentiment": {}}
         except Exception:
             pass
-        # Try HF Dataset pull (if HF_DATASET env set)
-        hf_dataset = os.getenv("HF_DATASET", "").strip()
-        if hf_dataset:
-            try:
-                from huggingface_hub import hf_hub_download
-                # download daily_stats.json from dataset repo
-                p = hf_hub_download(repo_id=hf_dataset, filename=f"{day}/daily_stats.json", repo_type="dataset")
-                data = _json.loads(Path(p).read_text(encoding="utf-8"))
-                return {
-                    "total": data.get("total", 0),
-                    "today": data.get("total", 0),
-                    "saved": 0,
-                    "read": 0,
-                    "by_source": data.get("by_source", {}),
-                    "by_category": data.get("by_category", {}),
-                    "by_sentiment": {},
-                }
-            except Exception:
-                pass
     except Exception:
         pass
     return None
@@ -485,64 +446,8 @@ def is_safe_url(url: str) -> bool:
 
 
 # ──────────────────────────────────────────────
-# Auto-Tagging (Keyword-based category classification)
+# Auto-Tagging (single classifier lives in categories.py)
 # ──────────────────────────────────────────────
-
-CATEGORY_KEYWORDS = {
-    'AI & ML': ['ai', 'artificial intelligence', 'machine learning', 'deep learning', 'gpt',
-                'chatgpt', 'llm', 'neural', 'openai', 'gemini', 'claude', 'copilot',
-                'transformer', 'diffusion', 'generative'],
-    'Security': ['security', 'hack', 'breach', 'vulnerability', 'malware', 'ransomware',
-                 'phishing', 'cyber', 'exploit', 'privacy', 'encryption', 'zero-day'],
-    'Hardware': ['chip', 'processor', 'gpu', 'cpu', 'nvidia', 'amd', 'intel', 'apple silicon',
-                 'semiconductor', 'quantum', 'hardware', 'laptop', 'phone', 'device'],
-    'Software': ['software', 'app', 'update', 'release', 'version', 'framework', 'library',
-                 'programming', 'developer', 'code', 'open source', 'github', 'linux', 'windows'],
-    'Business': ['startup', 'funding', 'acquisition', 'ipo', 'revenue', 'layoff', 'market',
-                 'company', 'ceo', 'billion', 'million', 'valuation', 'investor'],
-    'Science': ['science', 'research', 'study', 'discovery', 'space', 'nasa', 'climate',
-                'physics', 'biology', 'medicine', 'vaccine', 'health'],
-    'Gaming': ['game', 'gaming', 'xbox', 'playstation', 'nintendo', 'steam', 'esports',
-               'console', 'vr', 'ar', 'metaverse'],
-    'Social Media': ['twitter', 'facebook', 'instagram', 'tiktok', 'youtube', 'reddit',
-                     'social media', 'meta', 'bluesky', 'mastodon', 'threads'],
-}
-
-CATEGORY_FILTER_LOOKUP = {'all': 'all', 'general': 'general'}
-for _category in CATEGORY_KEYWORDS:
-    CATEGORY_FILTER_LOOKUP[_category.lower()] = _category
-
-
-def normalize_category_filter(category: str) -> str:
-    value = (category or '').strip().lower()
-    return CATEGORY_FILTER_LOOKUP.get(value, 'all')
-
-
-def classify_article(title: str) -> str:
-    """Classifies an article into a category based on keyword matching (word-boundary aware)."""
-    title_lower = title.lower()
-    # Extract words for boundary-aware matching of short terms like 'ai', 'game', 'chip'
-    words = set(re.findall(r'[a-z0-9]+', title_lower))
-    title_filtered = f' {title_lower} '
-    scores = {}
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        score = 0
-        for kw in keywords:
-            if ' ' in kw:
-                if kw in title_lower:
-                    score += 1
-            elif len(kw) <= 3:
-                if kw in words:
-                    score += 1
-            else:
-                if kw in title_lower:
-                    score += 1
-        if score > 0:
-            scores[category] = score
-
-    if scores:
-        return max(scores, key=scores.get)
-    return 'General'
 
 
 def _ensure_categories(articles: list[dict]) -> list[dict]:
