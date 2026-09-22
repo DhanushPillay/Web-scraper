@@ -54,14 +54,17 @@ class Database:
                                 pass
                         self._pg_pool = None
                     else:
-                        logger.error(f"PostgreSQL connection failed after 3 attempts: {e}. Falling back to SQLite WAL mode.")
-                        self._use_postgres = False
                         if self._pg_pool:
                             try:
                                 self._pg_pool.closeall()
                             except Exception:
                                 pass
                         self._pg_pool = None
+                        if os.getenv("SNIFFER_REQUIRE_POSTGRES") == "1":
+                            raise RuntimeError(
+                                f"SNIFFER_REQUIRE_POSTGRES=1 but PostgreSQL unreachable: {e}")
+                        logger.error(f"PostgreSQL connection failed after 3 attempts: {e}. Falling back to SQLite WAL mode.")
+                        self._use_postgres = False
 
         self.init_db()
 
@@ -127,6 +130,9 @@ class Database:
                     self._init_pg_pool()
                 conn = self._pg_pool.getconn()
             except Exception as e:
+                if os.getenv("SNIFFER_REQUIRE_POSTGRES") == "1":
+                    raise RuntimeError(
+                        f"SNIFFER_REQUIRE_POSTGRES=1 but PostgreSQL unreachable: {e}")
                 logger.error(f"PostgreSQL connection error: {e}. Falling back to SQLite.")
                 self._use_postgres = False
                 self._pg_pool = None
@@ -184,11 +190,15 @@ class Database:
         return dict(zip(cols, row))
 
     def _fetch_scalar(self, cursor) -> Any:
-        """Safely fetches a single scalar value from the first column of the next row."""
+        """First column of next row (None if empty). Works for Row tuples and RealDict rows."""
         row = cursor.fetchone()
         if row is None:
             return None
-        return list(self._row_to_dict(cursor, row).values())[0]
+        try:
+            return row[0]
+        except (TypeError, IndexError, KeyError):
+            values = list(self._row_to_dict(cursor, row).values())
+            return values[0] if values else None
 
     def init_db(self) -> None:
         """Initializes the database table and ensures schema is up to date."""
@@ -347,12 +357,7 @@ class Database:
         return '%s' if self._use_postgres else '?'
 
     def _cast_int(self, col: str) -> str:
-        return f"CAST({col} AS INTEGER)" if self._use_postgres else f"CAST({col} AS INTEGER)"
-
-    def _date_trunc_day(self, col: str) -> str:
-        if self._use_postgres:
-            return f"DATE(to_timestamp({col}))"
-        return f"date({col}, 'unixepoch')"
+        return f"CAST({col} AS INTEGER)"
 
     def _glob(self, col: str, pattern: str) -> str:
         if self._use_postgres:
@@ -367,40 +372,62 @@ class Database:
         """Adds a single article to the database."""
         self.add_articles([article])
 
-    def add_articles(self, articles: List[Dict[str, Any]]) -> None:
-        """Batch insert articles in a single transaction for performance."""
+    def add_articles(self, articles: List[Dict[str, Any]]) -> Tuple[int, int]:
+        """Batch insert articles in a single transaction for performance.
+
+        Returns (inserted, skipped): rows actually new vs. duplicate links.
+        """
         if not articles:
-            return
+            return (0, 0)
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
                 ph = self._ph_one()
-                cursor.executemany(f'''
-                    INSERT INTO articles
-                    (title, link, score, author, time_posted, comments, source, created_at,
-                     is_saved, is_read, sentiment, sentiment_score, category, read_time,
-                     metadata_processed_at, excerpt, image_url, dek, bullets)
-                    VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph},
-                            0, 0, 'neutral', 0.0, {ph}, 0, NULL, {ph}, {ph}, {ph}, {ph})
-                    ON CONFLICT (link) DO NOTHING
-                ''', [
-                    (
-                        a.get('title'), a.get('link'), a.get('score', 0),
-                        a.get('author', 'Unknown'), a.get('time', 'Unknown'),
-                        a.get('comments', '0'), a.get('source', 'Unknown'),
-                        time.time(),
-                        (a.get('category') or 'General'),
-                        a.get('excerpt', ''),
-                        a.get('image_url', ''),
-                        a.get('dek', ''),
-                        json.dumps(a.get('bullets', []) or [], ensure_ascii=False),
+                # Honest counts: ON CONFLICT DO NOTHING hides duplicates, and
+                # rowcount after executemany is driver-dependent, so find the
+                # genuinely new links first (chunked: SQLite caps variables).
+                links = [a.get('link') for a in articles if a.get('link')]
+                existing = set()
+                for i in range(0, len(links), 500):
+                    chunk = links[i:i + 500]
+                    cursor.execute(
+                        f"SELECT link FROM articles WHERE link IN ({self._ph(len(chunk))})",
+                        chunk,
                     )
-                    for a in articles
-                ])
+                    for r in cursor.fetchall():
+                        existing.add(r['link'] if isinstance(r, dict) else r[0])
+                fresh = [a for a in articles
+                         if a.get('link') is None or a.get('link') not in existing]
+                skipped = len(articles) - len(fresh)
+                if fresh:
+                    cursor.executemany(f'''
+                        INSERT INTO articles
+                        (title, link, score, author, time_posted, comments, source, created_at,
+                         is_saved, is_read, sentiment, sentiment_score, category, read_time,
+                         metadata_processed_at, excerpt, image_url, dek, bullets)
+                        VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph}, {ph},
+                                0, 0, 'neutral', 0.0, {ph}, 0, NULL, {ph}, {ph}, {ph}, {ph})
+                        ON CONFLICT (link) DO NOTHING
+                    ''', [
+                        (
+                            a.get('title'), a.get('link'), a.get('score', 0),
+                            a.get('author', 'Unknown'), a.get('time', 'Unknown'),
+                            a.get('comments', '0'), a.get('source', 'Unknown'),
+                            time.time(),
+                            (a.get('category') or 'General'),
+                            a.get('excerpt', ''),
+                            a.get('image_url', ''),
+                            a.get('dek', ''),
+                            json.dumps(a.get('bullets', []) or [], ensure_ascii=False),
+                        )
+                        for a in fresh
+                    ])
                 conn.commit()
-                logger.info(f"Batch inserted {len(articles)} articles (duplicates ignored).")
+                logger.info(f"Batch insert: {len(fresh)} new, {skipped} duplicates skipped.")
+                return (len(fresh), skipped)
             except Exception as e:
                 logger.error(f"DB error during batch insert: {e}")
+                return (0, len(articles))
 
     def upsert_images(self, articles: List[Dict[str, Any]]) -> None:
         """Update image_url for articles that have it but the DB row doesn't."""
@@ -438,7 +465,7 @@ class Database:
 
     def get_articles(self, limit: int = 30, offset: int = 0, source_filter: str = 'all',
                      keyword: str = '', saved_only: bool = False,
-                     unread_only: bool = False, category: str = '',
+                     category: str = '',
                      sort_by: str = 'newest') -> List[Dict[str, Any]]:
         """Retrieves articles with optional filtering and pagination."""
         with self.get_connection() as conn:
@@ -450,9 +477,6 @@ class Database:
 
             if saved_only:
                 query += " AND is_saved = 1"
-
-            if unread_only:
-                query += " AND is_read = 0"
 
             if source_filter and source_filter != 'all':
                 query += f" AND source = {ph}"
@@ -728,36 +752,6 @@ class Database:
                 'by_category': by_category,
                 'by_sentiment': by_sentiment
             }
-
-    def get_trending_words(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Returns most frequent meaningful words from recent article titles."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            twenty_four_hours_ago = time.time() - (24 * 60 * 60)
-            ph = self._ph_one()
-            cursor.execute(
-                f"SELECT title FROM articles WHERE created_at >= {ph}",
-                (twenty_four_hours_ago,)
-            )
-            rows = cursor.fetchall()
-            return [self._row_to_dict(cursor, row) for row in rows]
-
-    def get_articles_per_day(self, days: int = 7) -> List[Dict[str, Any]]:
-        """Returns article counts grouped by day for the chart."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cutoff = time.time() - (days * 24 * 60 * 60)
-            ph = self._ph_one()
-            date_fn = self._date_trunc_day('created_at')
-            cursor.execute(f'''
-                SELECT {date_fn} as day, COUNT(*) as count
-                FROM articles
-                WHERE created_at >= {ph}
-                GROUP BY day
-                ORDER BY day ASC
-            ''', (cutoff,))
-            rows = cursor.fetchall()
-            return [{'day': row['day'], 'count': row['count']} for row in rows]
 
     def get_personalized_feed(self, limit: int = 30) -> List[Dict[str, Any]]:
         """Returns articles boosted by user preferences (based on bookmarked sources/categories)."""
