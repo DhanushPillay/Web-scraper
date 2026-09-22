@@ -33,5 +33,8 @@ jobs:
     - name: Run Scraper and NLP Processor
       env:
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        # Fail fast instead of writing to an ephemeral runner-local SQLite
+        # file that vanishes with the runner when Postgres is unreachable.
+        SNIFFER_REQUIRE_POSTGRES: "1"
       run: |
         python scripts/github_scrape.py
