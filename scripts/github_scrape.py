@@ -34,9 +34,7 @@ def estimate_read_time(title: str, excerpt: str = '') -> int:
 
 def main():
     logger.info("Starting automated background scrape...")
-    ensure_nltk_data()
-    sia = SentimentIntensityAnalyzer()
-    
+
     # Check DB URI
     db_uri = os.environ.get('DATABASE_URL')
     if not db_uri:
@@ -69,6 +67,10 @@ def main():
         unprocessed = db.get_unprocessed_articles(limit=2000)
         
         if unprocessed:
+            # Lazy NLTK: only needed when there is metadata to compute, so
+            # empty runs exit before touching downloads or the lexicon.
+            ensure_nltk_data()
+            sia = SentimentIntensityAnalyzer()
             processed_at = time.time()
             for article in unprocessed:
                 title = article.get('title', '')
