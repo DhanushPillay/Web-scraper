@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 from urllib.parse import urlparse
 
+from pipeline.ingest import canonical_link
+
 logger = logging.getLogger(__name__)
 
 QUARANTINE_ROOT = Path("data/quarantine")
@@ -93,9 +95,9 @@ def validate_batch(
 
     for record in articles:
         errors = validate_article_record(record)
-        link = str(record.get("link", "")).strip()
+        link = canonical_link(str(record.get("link", "")))
 
-        # Duplicate link detection within batch
+        # Duplicate link detection within batch (canonical: www/trailing-slash/tracker-proof)
         if link and link in seen_links:
             errors.append("duplicate_link_in_batch")
 
