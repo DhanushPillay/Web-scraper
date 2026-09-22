@@ -3,7 +3,7 @@
 ![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![PySpark](https://img.shields.io/badge/Apache%20Spark-3.5-E25A1C?logo=apachespark&logoColor=white)
 ![DuckDB](https://img.shields.io/badge/DuckDB-In--Memory%20OLAP-FFF000?logo=duckdb&logoColor=black)
-![Pytest](https://img.shields.io/badge/tests-13%20passed%20(100%25)-brightgreen)
+![Pytest](https://img.shields.io/badge/tests-15%20passed%20(100%25)-brightgreen)
 ![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
@@ -44,6 +44,7 @@ flowchart TD
     Ingest[GitHub Actions Background Worker<br/>Heavy NLP & Extraction]:::source
     
     RSS & REST & XML --> Ingest
+    Ingest -->|0 articles from every source| FailRun([Fail the run red<br/>exit 1 — a dead feed must not look healthy]):::error
     
     %% Bronze
     Ingest -->|Raw JSONL| Bronze[(Bronze Layer<br/>Raw Data)]:::bronze
@@ -72,6 +73,11 @@ Every hour, a scheduled GitHub Action spins up an Ubuntu runner, giving the pipe
 - Uses Trafilatura to extract the full text of articles.
 - Runs NLTK Vader to perform sentiment analysis and computes reading times.
 - Connects to the database and upserts this rich metadata.
+- Fails loudly (`exit 1`) when zero articles scrape from every source, so a dead feed turns the run red instead of passing silently.
+- Logs honest accounting (`Inserted N new, skipped M duplicates`) — duplicates ignored by `ON CONFLICT DO NOTHING` are counted, not hidden.
+- Sets `SNIFFER_REQUIRE_POSTGRES=1`, so an unreachable database fails the run instead of writing to an ephemeral runner-local SQLite file that vanishes with the runner.
+- Initializes NLTK lazily, only when there is metadata to compute — empty runs exit before downloading data or loading the lexicon.
+- Logs per-phase timings (`Phase scrape/enrich/db-write+prune took …s`) so the hourly run's cost breakdown is visible in every log.
 
 ### 2. The Presentation Layer: Render (Web Dashboard)
 The web application runs on Render and is completely decoupled from the scraping process. It acts as a highly optimized, read-only presentation layer. It connects to the database to serve the pre-computed NLP metadata. If a user requests a summary on the fly, it relies on a custom, lightweight TF-IDF word frequency algorithm to generate summaries without needing heavy dependencies.
@@ -145,20 +151,21 @@ python src/app.py
 
 ```text
 Web-scraper/
-├── .github/workflows/       # CI/CD and daily automated scraping
+├── .github/workflows/       # CI/CD, hourly scraping, daily tests + lakehouse build
 ├── dags/                    # Apache Airflow orchestration DAGs
 ├── data/                    # The Data Lake (Bronze JSONL, Silver/Gold Parquet)
 ├── doc/                     # Deep-dive technical documentation
 ├── infrastructure/          # Terraform (AWS Enterprise architecture stubs)
-├── pipeline/                # Core ETL logic (ingest, validate, transform)
-├── processing/              # PySpark analytical jobs
 ├── scripts/                 # Heavy background workers (github_scrape.py)
-├── src/                     
+├── sql/                     # Athena queries for the AWS deployment path
+├── src/
 │   ├── app.py               # Lightweight Flask Web Application
+│   ├── categories.py        # Single category keyword map + classifier
 │   ├── database.py          # Resilient PostgreSQL connection manager
-│   ├── pipeline/            # Enrichment and processing logic
+│   ├── pipeline/            # Core ETL logic (ingest, validate, transform, enrich)
+│   ├── processing/          # PySpark/DuckDB analytical jobs
+│   ├── static/ & templates/ # HTML, CSS, and JS for the Premium Editorial UI
 │   └── web_scraper.py       # Core scraping logic
-├── static/ & templates/     # HTML, CSS, and JS for the Premium Editorial UI
 ├── tests/                   # Pytest suite (100% passing)
 ├── requirements.txt         # Lightweight dependencies for the web server
 └── requirements-actions.txt # Heavy NLP dependencies for the GitHub Action
