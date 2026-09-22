@@ -50,6 +50,15 @@ $$\text{record\_hash} = \text{SHA-256}(\text{source} + ":" + \text{canonical\_li
 
 The Bronze ingestion layer checks this hash before saving. If it exists, it skips it.
 
+### Honest accounting (the worker must prove its work)
+
+A green CI run only means exit code 0, so the worker is instrumented to make "did nothing" visible:
+
+* **Real insert counts.** `add_articles` inserts with `ON CONFLICT (link) DO NOTHING`, which hides duplicates — logging the input length as "inserted" overstated reality. It now pre-checks existing links (one chunked `SELECT`, riding the existing `UNIQUE` index on `link`) and returns `(inserted, skipped)`. Measured overhead on SQLite (min of 5 runs, throwaway bench): worst case **+1.0ms absolute** (150-article all-new batch: 5.3ms vs 4.3ms); duplicate-heavy batches are ~50% *faster* because skipped rows cost one indexed lookup instead of a conflicting write.
+* **Fail-loud empty runs.** Zero articles from every source exits 1 — per-scraper failures are already isolated, so all-zero means systemic outage and deserves a red run.
+* **Lazy NLTK.** VADER and the NLTK downloads initialize only inside the metadata branch, so empty runs exit before touching them.
+* **Phase timings.** Every run logs `Phase scrape / enrich / db-write+prune took …s`, so the hourly cost breakdown is in the logs, not a bench suite nobody re-runs.
+
 ---
 
 ## 3. The Data Quality Gate (Stopping Bad Data)
@@ -97,7 +106,7 @@ To keep costs at ₹0 without sacrificing reliability, the storage is split base
 | :--- | :--- | :--- |
 | **Analytical (OLAP)** | Local Hive-Partitioned Parquet + DuckDB | Parquet is highly compressed. DuckDB queries it directly from disk at sub-millisecond speeds. |
 | **Transactional (OLTP)** | Neon Serverless PostgreSQL | Neon scales to zero when not in use, making it completely free, but spins up instantly to save user bookmarks. |
-| **Failover / Local Dev** | SQLite WAL | If Neon is down, the system gracefully falls back to a local SQLite database in Write-Ahead-Log mode. |
+| **Failover / Local Dev** | SQLite WAL | If Neon is down, the web app gracefully falls back to a local SQLite database in Write-Ahead-Log mode. The hourly worker explicitly opts out of this: with `SNIFFER_REQUIRE_POSTGRES=1` it raises instead, because a runner-local SQLite file dies with the ephemeral runner — a green run with zero durable effect. |
 
 ---
 
