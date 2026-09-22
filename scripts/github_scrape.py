@@ -11,6 +11,7 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 from database import Database
 from web_scraper import NewsAggregator
+from categories import classify_article
 from pipeline.enrich import enrich_batch as _enrich_batch
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -54,7 +55,7 @@ def main():
     if new_articles:
         logger.info(f"Enriching {len(new_articles)} articles with fetch=True (Deep Extract)...")
         new_articles = _enrich_batch(new_articles, fetch=True)
-        db.add_articles(new_articles)
+        inserted, skipped = db.add_articles(new_articles)
         db.upsert_images(new_articles)
         try:
             retention = int(os.environ.get('RETENTION_DAYS', '2'))
@@ -62,10 +63,9 @@ def main():
             retention = 2
         removed = db.prune_old_articles(max_age_days=retention)
         logger.info(f"Pruned {removed} articles older than {retention}d.")
-        logger.info(f"Successfully added {len(new_articles)} new articles to DB.")
+        logger.info(f"Inserted {inserted} new articles, skipped {skipped} duplicates.")
         
         # Process metadata for unprocessed articles
-        from app import classify_article
         unprocessed = db.get_unprocessed_articles(limit=2000)
         
         if unprocessed:
@@ -97,7 +97,8 @@ def main():
                 )
             logger.info(f"Processed NLP metadata for {len(unprocessed)} articles.")
     else:
-        logger.info("No new articles found.")
+        logger.error("Scraped 0 articles from all sources — failing loud so a dead feed turns the run red.")
+        sys.exit(1)
 
     logger.info("Automated scrape complete.")
 
