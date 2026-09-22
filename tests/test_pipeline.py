@@ -281,6 +281,7 @@ def test_zero_scrape_fails_loud(monkeypatch):
     monkeypatch.setattr(mod, "NewsAggregator", _EmptyAgg)
     monkeypatch.setattr(mod, "Database", lambda *a, **k: None)
     monkeypatch.setattr(mod, "ensure_nltk_data", lambda: None)
+    monkeypatch.setattr(mod, "SentimentIntensityAnalyzer", lambda *a, **k: None)
     monkeypatch.setenv("DATABASE_URL", "postgresql://dummy/dummy")
     with pytest.raises(SystemExit) as e:
         mod.main()
