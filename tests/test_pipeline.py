@@ -233,3 +233,55 @@ def test_fts_and_database_operations(tmp_path):
 
     feed = db.get_personalized_feed(limit=5)
     assert isinstance(feed, list)
+
+
+# -----------------------------------------------------------------------------
+# Honest worker accounting (green CI must mean real work)
+# -----------------------------------------------------------------------------
+def _article(link, title="T"):
+    return {"title": title, "link": link, "source": "HN", "excerpt": "x"}
+
+
+def test_add_articles_honest_counts(tmp_path):
+    db = Database(str(tmp_path / "counts.db"))
+    assert db.add_articles([_article("https://e.com/1"), _article("https://e.com/2")]) == (2, 0)
+    assert db.get_article_count() == 2
+    # Identical re-insert: nothing new, count unchanged.
+    assert db.add_articles([_article("https://e.com/1"), _article("https://e.com/2")]) == (0, 2)
+    assert db.get_article_count() == 2
+    # Mixed batch reports the exact split.
+    assert db.add_articles([_article("https://e.com/2"), _article("https://e.com/3")]) == (1, 1)
+    assert db.get_article_count() == 3
+    assert db.add_articles([]) == (0, 0)
+
+
+def test_require_postgres_flag_fails_fast(tmp_path, monkeypatch):
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://127.0.0.1:1/db")
+    monkeypatch.setenv("SNIFFER_REQUIRE_POSTGRES", "1")
+    with pytest.raises(RuntimeError):
+        Database(str(tmp_path / "never.db"))
+
+
+def test_zero_scrape_fails_loud(monkeypatch):
+    import importlib.util
+    path = os.path.join(os.path.dirname(__file__), "..", "scripts", "github_scrape.py")
+    spec = importlib.util.spec_from_file_location("github_scrape", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class _EmptyAgg:
+        def scrape_all(self, **kw):
+            pass
+
+        def get_articles(self):
+            return []
+
+    monkeypatch.setattr(mod, "NewsAggregator", _EmptyAgg)
+    monkeypatch.setattr(mod, "Database", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "ensure_nltk_data", lambda: None)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://dummy/dummy")
+    with pytest.raises(SystemExit) as e:
+        mod.main()
+    assert e.value.code == 1
