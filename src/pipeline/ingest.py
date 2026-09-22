@@ -16,9 +16,26 @@ BRONZE_ROOT = Path("data/bronze")
 WATERMARK_PATH = Path("data/watermark.json")
 
 
+def canonical_link(link: str) -> str:
+    """Canonical URL for dedup: lower host, strip www/trailing slash, drop trackers."""
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    s = (link or "").strip()
+    if not s:
+        return ""
+    try:
+        p = urlsplit(s)
+        net = p.netloc.lower().removeprefix("www.")
+        path = p.path.rstrip("/") or ""
+        q = [(k, v) for k, v in parse_qsl(p.query)
+             if not k.lower().startswith("utm_") and k.lower() not in ("ref", "fbclid", "gclid")]
+        return urlunsplit((p.scheme.lower(), net, path, urlencode(q), ""))
+    except Exception:
+        return s.lower()
+
+
 def generate_record_hash(link: str, source: str = "") -> str:
-    """Computes a deterministic SHA-256 checksum for deduplication and lineage."""
-    canonical = f"{source.strip().lower()}:{link.strip().lower()}"
+    """Deterministic SHA-256 over canonical link for dedup and lineage."""
+    canonical = f"{source.strip().lower()}:{canonical_link(link)}"
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
