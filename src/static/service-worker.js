@@ -1,5 +1,7 @@
 // Service Worker — Sniffer
-const CACHE_NAME = 'sniffer-v2';
+// Bump alongside the ?v= query in templates/index.html whenever app.js or
+// app.css changes. Returning users only pick up new assets if both move.
+const CACHE_NAME = 'sniffer-v5';
 const APP_SHELL = [
     '/static/css/app.css',
     '/static/js/app.js',
@@ -39,10 +41,12 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    // Cache-first for static assets (css/js/images) — stale-while-revalidate
+    // Cache-first for static assets (css/js/images) — stale-while-revalidate.
+    // ignoreSearch so a cached bare path still satisfies the ?v=N request the
+    // template makes, instead of forcing a network round trip every load.
     event.respondWith(
         caches.open(CACHE_NAME).then(cache => {
-            return cache.match(event.request).then(cached => {
+            return cache.match(event.request, { ignoreSearch: true }).then(cached => {
                 const fetched = fetch(event.request).then(response => {
                     if (response.ok && response.type === 'basic') {
                         cache.put(event.request, response.clone());
