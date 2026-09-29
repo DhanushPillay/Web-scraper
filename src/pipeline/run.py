@@ -12,12 +12,14 @@ from pathlib import Path
 # Ensure project root is on Python path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pipeline.ingest import write_bronze_by_source
-from pipeline.validate import (
-    validate_batch, save_quarantine_records, save_quality_metrics
-)
 from pipeline.enrich import enrich_batch
-from pipeline.transform import to_silver, read_bronze_records
+from pipeline.ingest import write_bronze_by_source
+from pipeline.transform import read_bronze_records, to_silver
+from pipeline.validate import (
+    save_quality_metrics,
+    save_quarantine_records,
+    validate_batch,
+)
 from processing.spark_job import run_gold
 
 logging.basicConfig(
@@ -35,7 +37,7 @@ def scrape_sources(hn_pages: int = 1, force: bool = True):
     return aggregator.get_articles()
 
 
-def run_pipeline(no_scrape: bool = False, day: str = None) -> dict:
+def run_pipeline(no_scrape: bool = False, day: str | None = None) -> dict:
     """Executes the complete Medallion Lakehouse data pipeline."""
     if day is None:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -82,7 +84,7 @@ def run_pipeline(no_scrape: bool = False, day: str = None) -> dict:
     silver_path = to_silver(enriched_records, day=day)
     logger.info(f"Silver Parquet written to: {silver_path}")
 
-    # 5. GOLD LAYER: Analytical Marts (PySpark / DuckDB)
+    # 5. GOLD LAYER: Analytical Marts (DuckDB)
     logger.info("[5/5] Building Gold analytical marts & window rankings...")
     gold_path = run_gold(day=day)
     logger.info(f"Gold analytical marts generated at: {gold_path}")
