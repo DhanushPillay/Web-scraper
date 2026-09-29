@@ -3,7 +3,7 @@ services:
     name: sniffer
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn src.app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2 --threads 4
+    startCommand: gunicorn src.app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 2 --threads 4
     envVars:
       - key: PYTHONPATH
         value: "src"
@@ -13,6 +13,14 @@ services:
         value: "false"
       - key: RENDER
         value: "true"
+      # Flask 3.1 TRUSTED_HOSTS is only meaningful with a non-empty list, so
+      # the real hostname must be set here rather than defaulted in code.
+      - key: TRUSTED_HOSTS
+        sync: false
+      # Fail the boot if Postgres is unreachable instead of silently degrading
+      # to a throwaway local SQLite file.
+      - key: SNIFFER_REQUIRE_POSTGRES
+        value: "1"
       - key: SECRET_KEY
         sync: false
       - key: DATABASE_URL
