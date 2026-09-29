@@ -3,30 +3,35 @@ Flask Application — Sniffer
 Routes, background scheduler, sentiment analysis, trending topics,
 auto-tagging, charts, export, personalized feed, and webhook/email stubs.
 """
-import os
-import re
-import time
-import io
 import csv
+import io
+import ipaddress
 import json
 import logging
-import traceback
+import os
+import re
 import smtplib
-import atexit
 import socket
-import ipaddress
+import time
+import traceback
 from email.mime.text import MIMEText
-from collections import Counter
+from typing import Any, cast
 from urllib.parse import urlparse
-from typing import Any, Optional, Union, cast
 
-from flask import (Flask, render_template, request, Response,
-                   stream_with_context, jsonify, send_file)
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    render_template,
+    request,
+    stream_with_context,
+)
 from flask.typing import ResponseReturnValue
-from web_scraper import NewsAggregator
+
+from categories import classify_article, normalize_category_filter
 from database import Database
 from pipeline.enrich import enrich_batch as _enrich_batch
-from categories import classify_article, normalize_category_filter
+from web_scraper import NewsAggregator
 
 # Security extensions
 try:
@@ -95,43 +100,26 @@ def humanize_time_filter(value):
 
 
 @app.context_processor
-def inject_article_image_helpers():
-    """Letter-box fallback — no generic Unsplash, no duplication."""
-    # ponytail: deterministic letter, no external photo
-    source_meta = {
-        'Hacker News': {'initials': 'HN', 'color': '#FF6600'},
-        'TechCrunch': {'initials': 'TC', 'color': '#0A9E74'},
-        'Reddit': {'initials': 'RE', 'color': '#FF4500'},
-        'The Verge': {'initials': 'VG', 'color': '#E01E5A'},
-        'Ars Technica': {'initials': 'AT', 'color': '#0086A8'},
-        'GitHub Trending': {'initials': 'GH', 'color': '#24292E'},
-        'arXiv': {'initials': 'AX', 'color': '#B31B1B'},
-    }
-    def fallback_data(source: str, title: str = "", link: str = ""):
-        m = source_meta.get(source, {'initials': (source[:2] if source else 'SN').upper(), 'color': '#3F3F46'})
-        return m
+def inject_humanize_time():
+    return {'humanize_time': _humanize_time}
 
-    # keep legacy helper for compat — now returns letter-box not Unsplash
-    def fallback_image(source: str, title: str = "", link: str = ""):
-        # reuse letter-box as image fallback will be rendered as div, not <img>
-        return ""
 
-    return {
-        'article_fallback_data': fallback_data,
-        'article_fallback_image': lambda source, title="", link="": fallback_image(source, title, link),
-        'humanize_time': _humanize_time,
-    }
-
-# ──────────────────────────────────────────────
 # Security Hardening
-# ──────────────────────────────────────────────
-
 # Trusted hosts (Flask 3.1+) — prevent Host header attacks
-if os.getenv('RENDER'):
-    app.config['TRUSTED_HOSTS'] = []  # ponytail: skip on Render (proxy complicates host matching)
+trusted_hosts_env = os.getenv('TRUSTED_HOSTS', '')
+if trusted_hosts_env:
+    app.config['TRUSTED_HOSTS'] = [
+        h.strip() for h in trusted_hosts_env.split(',') if h.strip()
+    ]
+elif os.getenv('RENDER'):
+    # Behind a proxy the original Host is the public hostname, which the
+    # platform does not tell us. An empty list would allow ANY host, so leave
+    # the key unset and let the deploy set TRUSTED_HOSTS (render.yaml does).
+    logger.warning(
+        "TRUSTED_HOSTS not set on Render — host header validation is disabled. "
+        "Set the TRUSTED_HOSTS env var to your public hostname.")
 else:
-    trusted_hosts = os.getenv('TRUSTED_HOSTS', '').split(',') if os.getenv('TRUSTED_HOSTS') else ['localhost', '127.0.0.1']
-    app.config['TRUSTED_HOSTS'] = [h.strip() for h in trusted_hosts if h.strip()]
+    app.config['TRUSTED_HOSTS'] = ['localhost', '127.0.0.1']
 
 # Request size limits (DoS mitigation)
 app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
@@ -160,7 +148,11 @@ app.config.update(
 if _talisman_available:
     csp = {
         'default-src': ["'self'"],
-        'script-src': ["'self'", "'unsafe-inline'"],  # inline scripts for now
+        'script-src': ["'self'"],
+        # index.html has no inline <script>; every handler lives in app.js.
+        'script-src-attr': ["'none'"],
+        # style-src still needs unsafe-inline for the style="" the template sets
+        # and the jsdelivr stylesheet.
         'style-src': ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
         'img-src': ["'self'", 'data:', 'https:'],
         'font-src': ["'self'", 'https://cdn.jsdelivr.net'],
@@ -216,11 +208,9 @@ else:
 # Initialize Database (shared)
 db = Database()
 
-# ──────────────────────────────────────────────
 # Helpers
-# ──────────────────────────────────────────────
 # Singleton aggregator so CACHE_TTL and health tracking actually work
-_aggregator_instance: Optional[NewsAggregator] = None
+_aggregator_instance: NewsAggregator | None = None
 
 def get_aggregator() -> NewsAggregator:
     """Return shared NewsAggregator (per-process singleton)."""
@@ -261,33 +251,44 @@ def _get_gold_stats():
                 from huggingface_hub import hf_hub_download
                 p = hf_hub_download(repo_id=hf_dataset, filename=f"{day}/daily_stats.json", repo_type="dataset")
                 return _gold_shape(json.loads(Path(p).read_text(encoding="utf-8")))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("HF_DATASET lookup failed for %s: %s", day, e)
         try:
             import duckdb
-            if Path("data/gold").exists() and any(Path("data/gold").rglob("*.parquet")):
-                # ponytail: DuckDB reads hive-partitioned parquet directly
-                q = duckdb.query("SELECT source, count(*) c FROM read_parquet('data/gold/**/*.parquet', hive_partitioning=1) GROUP BY source").fetchall()
-                by_source = {r[0]: r[1] for r in q}
+            marts = sorted(Path("data/gold").glob("*/source_metrics.parquet"))
+            if marts:
+                # Read ONE mart. Globbing data/gold/** spans by_category,
+                # source_metrics and top_ranked_articles, whose schemas are
+                # mutually incompatible, so DuckDB bound to the
+                # alphabetically-first file and raised BinderException —
+                # swallowed below, leaving Gold stats permanently unreachable.
+                q = duckdb.query(
+                    "SELECT source, sum(total_articles) c "
+                    f"FROM read_parquet({[str(m) for m in marts]!r}, union_by_name=true) "
+                    "GROUP BY source ORDER BY c DESC"
+                ).fetchall()
+                by_source = {r[0]: int(r[1]) for r in q if r[0]}
                 if by_source:
                     total = sum(by_source.values())
-                    return {"total": total, "today": total, "saved": 0, "read": 0, "by_source": by_source, "by_category": {}, "by_sentiment": {}}
-        except Exception:
-            pass
-    except Exception:
-        pass
+                    return {"total": total, "today": total, "saved": 0, "read": 0,
+                            "by_source": by_source, "by_category": {}, "by_sentiment": {}}
+        except Exception as e:
+            logger.debug(f"Gold parquet stats unavailable: {e}")
+    except Exception as e:
+        logger.debug(f"Gold stats unavailable: {e}")
     return None
 
 
 def get_cached_stats():
-    # Prefer Gold if available (shows lakehouse), else DB
-    gold = _get_gold_stats()
-    if gold is not None:
-        return gold
+    # The TTL must wrap the Gold lookup too. It used to run above this check,
+    # so every page load did a network-bound hf_hub_download, a full rglob and
+    # a parquet scan with no caching and no negative caching for a 404.
     now = time.time()
     if _stats_cache['data'] is not None and (now - _stats_cache['ts']) < _STATS_TTL:
         return _stats_cache['data']
-    data = db.get_stats()
+    data = _get_gold_stats()
+    if data is None:
+        data = db.get_stats()
     _stats_cache['data'] = data
     _stats_cache['ts'] = now
     return data
@@ -312,18 +313,26 @@ def parse_bounded_int(value: Any, default: int, minimum: int, maximum: int) -> i
     return max(minimum, min(maximum, parsed))
 
 
-def sanitize_keyword(keyword: str) -> str:
-    """Sanitizes keyword input to avoid malformed queries."""
+def sanitize_keyword(keyword: str) -> str | None:
+    """Sanitizes keyword input. Returns None when the input is rejected.
+
+    The distinction matters: returning '' on rejection made the caller's
+    `if keyword:` false, which dropped the WHERE clause and served the whole
+    unfiltered feed as "search results" for any query containing a character
+    outside the allowlist (%, ", emoji, CJK comma, ...).
+    """
     cleaned = (keyword or '').strip()
     if not cleaned:
         return ''
 
     if len(cleaned) > MAX_KEYWORD_LENGTH:
-        cleaned = cleaned[:MAX_KEYWORD_LENGTH]
+        # Re-strip: truncating at N can leave a trailing space, which makes
+        # `LIKE '%...a %'` unmatchable.
+        cleaned = cleaned[:MAX_KEYWORD_LENGTH].strip()
 
     if not KEYWORD_REGEX.fullmatch(cleaned):
         logger.warning("Rejected keyword with invalid characters")
-        return ''
+        return None
 
     return cleaned
 
@@ -335,9 +344,11 @@ def sanitize_search_query(query: str) -> str:
         return ''
 
     if len(cleaned) > MAX_SEARCH_QUERY_LENGTH:
-        cleaned = cleaned[:MAX_SEARCH_QUERY_LENGTH]
+        cleaned = cleaned[:MAX_SEARCH_QUERY_LENGTH].strip()
 
-    if any(ord(char) < 32 for char in cleaned):
+    # isprintable() also excludes DEL and the C1 range, not just < 0x20;
+    # U+0085 is whitespace to the FTS5 tokenizer.
+    if not all(char.isprintable() or char.isspace() for char in cleaned):
         logger.warning("Rejected search query with control characters")
         return ''
 
@@ -354,7 +365,10 @@ def normalize_source_filter(source: str) -> str:
     return value if value in ALLOWED_SOURCE_FILTERS else 'all'
 
 
-def parse_positive_int(value: Any) -> Optional[int]:
+def parse_positive_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        # int(True) == 1, so {"article_id": true} toggled article 1.
+        return None
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -362,7 +376,17 @@ def parse_positive_int(value: Any) -> Optional[int]:
     return parsed if parsed > 0 else None
 
 
-def get_json_payload() -> Optional[dict[str, Any]]:
+def payload_str(data: dict[str, Any], key: str) -> str:
+    """Reads a string field, tolerating null/non-string JSON values.
+
+    `data.get(key, '').strip()` raised AttributeError on {"url": 123} or
+    {"url": null}, turning a client mistake into a 500.
+    """
+    value = data.get(key)
+    return value.strip() if isinstance(value, str) else ''
+
+
+def get_json_payload() -> dict[str, Any] | None:
     """Safely parses a JSON body and returns None for malformed payloads."""
     data = request.get_json(silent=True)
     if isinstance(data, dict):
@@ -383,7 +407,7 @@ def is_valid_email(email: str) -> bool:
 
 BLOCKED_HOSTS = {'localhost', '127.0.0.1', '0.0.0.0', '169.254.169.254', '::1'}
 
-IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
 def _is_disallowed_ip(address: IPAddress) -> bool:
@@ -439,15 +463,22 @@ def is_safe_url(url: str) -> bool:
         if _resolves_to_disallowed_ip(hostname):
             return False
 
-    if parsed.port and parsed.port not in (80, 443):
+    # urlparse().port is a property that RAISES on an out-of-range or
+    # non-numeric port. That ValueError escaped to a 500 from /api/summarize,
+    # and it was then swallowed by the caller's `except Exception`, which
+    # re-fetched the URL through trafilatura with no SSRF check at all.
+    # Port 0 is also falsy, so the old `if parsed.port` skipped the check.
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if port is not None and port not in (80, 443):
         return False
 
     return True
 
 
-# ──────────────────────────────────────────────
 # Auto-Tagging (single classifier lives in categories.py)
-# ──────────────────────────────────────────────
 
 
 def _ensure_categories(articles: list[dict]) -> list[dict]:
@@ -461,9 +492,7 @@ def _ensure_categories(articles: list[dict]) -> list[dict]:
     return articles
 
 
-# ──────────────────────────────────────────────
 # Routes
-# ──────────────────────────────────────────────
 
 @app.route('/download')
 def download_csv() -> ResponseReturnValue:
@@ -521,6 +550,9 @@ def saved_articles():
 def index():
     """Main dashboard route with scraping, filtering, and pagination."""
     keyword = sanitize_keyword(request.form.get('keyword', request.args.get('keyword', '')))
+    if keyword is None:
+        return jsonify({'error': 'invalid_keyword',
+                        'message': 'Search contains unsupported characters.'}), 400
     pages = parse_bounded_int(
         request.form.get('pages', request.args.get('pages', 1)),
         default=1,
@@ -548,9 +580,10 @@ def index():
                     new_articles = _enrich_batch(new_articles, fetch=False)
                     new_articles = _ensure_categories(new_articles)
                 except Exception as e:
-                    logger.warning(f"Enrich failed: {e}")
-                db.add_articles(new_articles)
+                    logger.warning(f"Enrich failed: {e}", exc_info=True)
+                inserted, _skipped = db.add_articles(new_articles)
                 db.upsert_images(new_articles)
+                logger.info(f"Refresh saved {inserted} new articles.")
                 try:
                     db.prune_old_articles(max_age_days=int(os.getenv('RETENTION_DAYS', '2')))
                 except Exception as e:
@@ -559,25 +592,25 @@ def index():
             else:
                 logger.info("Querying existing data...")
 
-    except Exception as e:
-        logger.error(f"Error during scrape/filter: {e}")
+    except Exception:
+        logger.exception("Error during scrape/filter")
 
-    # Fetch articles with pagination
-    articles = db.get_articles(
-        limit=per_page, offset=offset,
-        source_filter=source_filter, keyword=keyword,
-        category=category_filter,
-        sort_by=sort_by
-    )
+    # Inside the same try: a DB blip here used to escape as raw JSON instead
+    # of the dashboard.
+    try:
+        articles = db.get_articles(
+            limit=per_page, offset=offset,
+            source_filter=source_filter, keyword=keyword,
+            category=category_filter,
+            sort_by=sort_by
+        )
+        total = db.get_total_count(source_filter=source_filter, keyword=keyword, category=category_filter)
+        stats = get_cached_stats()
+    except Exception:
+        logger.exception("Failed to load dashboard")
+        articles, total, stats = [], 0, None
 
-    total = db.get_total_count(source_filter=source_filter, keyword=keyword, category=category_filter)
     total_pages = max(1, (total + per_page - 1) // per_page)
-
-    # Get stats
-    stats = get_cached_stats()
-
-    # Source health
-    health = get_aggregator().get_health()
 
     return render_template('index.html',
                            articles=articles,
@@ -586,16 +619,13 @@ def index():
                            page=page,
                            total_pages=total_pages,
                            showing_saved=False,
-                           source_health=health,
                            keyword=keyword,
                            sort_by=sort_by,
                            source_filter=source_filter,
                            category_filter=category_filter)
 
 
-# ──────────────────────────────────────────────
 # SSE Scrape Progress Endpoint
-# ──────────────────────────────────────────────
 
 @app.route('/api/scrape', methods=['POST'])
 def api_scrape():
@@ -607,69 +637,78 @@ def api_scrape():
         import json as _json
         try:
             agg = get_aggregator()
-            scrapers = agg.scrapers
+            scrapers = list(agg.scrapers)
         except Exception as e:
-            logger.exception(f"Scrape init failed: {e}")
+            logger.exception("Scrape init failed")
             yield f"data: {_json.dumps({'stage': f'Error: {e}', 'progress': 100, 'error': True})}\n\n"
             return
-        total_steps = len(scrapers) + 3  # scrapers + enrich + db_save + metadata
+        total_steps = len(scrapers) + 3
         completed = 0
 
-        # Step 1-N: Scrape each source individually
-        agg.articles = []
+        # Accumulate locally. Assigning to the process-wide singleton meant two
+        # concurrent POSTs interleaved into one list, and a disconnect left
+        # agg.articles holding a half-finished scrape that index() then wrote
+        # to the DB.
+        collected = []
         for scraper in scrapers:
             name = getattr(scraper, 'name', scraper.__class__.__name__)
             yield f"data: {_json.dumps({'stage': f'Scanning {name}...', 'progress': int(completed / total_steps * 100)})}\n\n"
             try:
-                pages = 1
-                result = scraper.scrape(pages)
+                result = scraper.scrape(1)
                 if result:
                     from utils.credibility import is_credible, score_article
                     for a in result:
                         if is_credible(a.get('title', ''), a.get('link', '')):
                             _, cred = score_article(a.get('title', ''), a.get('link', ''))
                             a['credibility'] = cred
-                            agg.articles.append(a)
+                            collected.append(a)
+                elif getattr(scraper, 'last_status', '') == 'error':
+                    detail = getattr(scraper, 'last_error', '') or 'no reason given'
+                    yield f"data: {_json.dumps({'stage': f'{name}: no articles ({detail})'})}\n\n"
             except Exception as e:
                 logger.error(f"Scraper {name} failed: {e}")
             completed += 1
 
-        # Deduplicate
         seen = set()
         deduped = []
-        for a in agg.articles:
+        for a in collected:
             link = a.get('link')
             if link and link not in seen:
                 seen.add(link)
                 deduped.append(a)
-        agg.articles = deduped
 
-        # Step N+1: Image enrichment (skipped on Render free tier — OOM risk)
         yield f"data: {_json.dumps({'stage': 'Fetching thumbnails...', 'progress': int(completed / total_steps * 100)})}\n\n"
         if os.getenv('RENDER'):
             logger.info("Skipping image enrichment on Render free tier.")
         else:
             try:
                 import asyncio
+                agg.articles = deduped
                 asyncio.run(agg._enrich_images_async())
+                deduped = agg.get_articles()
             except Exception as e:
-                logger.warning(f"Image enrichment failed: {e}")
+                logger.warning(f"Image enrichment failed: {e}", exc_info=True)
         completed += 1
 
-        # Step N+2: Enrich + save to DB
         yield f"data: {_json.dumps({'stage': 'Enriching & saving...', 'progress': int(completed / total_steps * 100)})}\n\n"
-        new_articles = agg.get_articles()
+        new_articles = deduped
         try:
             new_articles = _enrich_batch(new_articles, fetch=False)
             new_articles = _ensure_categories(new_articles)
         except Exception as e:
-            logger.warning(f"Enrich failed: {e}")
+            logger.warning(f"Enrich failed: {e}", exc_info=True)
         try:
-            db.add_articles(new_articles)
+            inserted, skipped = db.add_articles(new_articles)
             db.upsert_images(new_articles)
         except Exception as e:
-            logger.exception(f"Scrape DB save failed: {e}")
+            logger.exception("Scrape DB save failed")
             yield f"data: {_json.dumps({'stage': f'Error saving: {e}', 'progress': 100, 'error': True})}\n\n"
+            return
+        # A batch of articles with zero inserts means the write failed, not
+        # that every one of them was already in the table.
+        if new_articles and not inserted:
+            logger.error(f"Scrape found {len(new_articles)} articles but inserted 0")
+            yield f"data: {_json.dumps({'stage': 'Error saving: 0 rows inserted', 'progress': 100, 'error': True})}\n\n"
             return
         try:
             retention = int(os.getenv('RETENTION_DAYS', '2'))
@@ -681,36 +720,41 @@ def api_scrape():
             logger.warning(f"Prune failed: {e}")
         completed += 1
 
-        # Step N+3: Process metadata
         yield f"data: {_json.dumps({'stage': 'Finishing...', 'progress': int(completed / total_steps * 100)})}\n\n"
         _stats_cache['data'] = None
+        # Publish only after the data is safely in the DB, so a concurrent
+        # index() can never persist a partial list.
+        agg.articles = new_articles
         agg._last_scrape_time = time.time()
         completed += 1
 
-        # Done
         try:
             total_count = db.get_total_count()
         except Exception as e:
-            logger.exception(f"Scrape total-count failed: {e}")
+            logger.exception("Scrape total-count failed")
             yield f"data: {_json.dumps({'stage': f'Error finishing: {e}', 'progress': 100, 'error': True})}\n\n"
             return
-        yield f"data: {_json.dumps({'stage': 'Done', 'progress': 100, 'total': total_count})}\n\n"
+        yield f"data: {_json.dumps({'stage': 'Done', 'progress': 100, 'total': total_count, 'inserted': inserted, 'skipped': skipped})}\n\n"
 
     return Response(stream_with_context(generate()),
                     mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
-# ──────────────────────────────────────────────
 # API Routes
-# ──────────────────────────────────────────────
 
 # Rate limit decorator helper
 def rate_limit(limit_str: str):
-    """Apply rate limit if limiter is available."""
+    """Apply a per-route rate limit that ADDS to the global defaults.
+
+    flask-limiter's LimitDecorator defaults to override_defaults=True, which
+    REPLACES the 200/hour global rather than adding to it. That silently left
+    /bookmark and /toggle_read at 30/min with no hourly ceiling (1800/hour) and
+    /api/summarize at 1200 outbound fetches per hour.
+    """
     def decorator(f):
         if limiter:
-            return limiter.limit(limit_str)(f)
+            return limiter.limit(limit_str, override_defaults=False)(f)
         return f
     return decorator
 
@@ -761,7 +805,7 @@ def subscribe() -> ResponseReturnValue:
     if data is None:
         return jsonify({'error': 'Invalid JSON payload'}), 400
 
-    email = data.get('email', '').strip()
+    email = payload_str(data, 'email')
     if not email or not is_valid_email(email):
         return jsonify({'error': 'Please enter a valid email address'}), 400
 
@@ -787,9 +831,6 @@ def api_search() -> ResponseReturnValue:
     return jsonify({'results': results, 'count': len(results)})
 
 
-
-
-
 @app.route('/api/health')
 def api_health() -> ResponseReturnValue:
     """Returns scraper health status for all sources."""
@@ -811,7 +852,7 @@ def summarize() -> ResponseReturnValue:
     if data is None:
         return jsonify({'error': 'Invalid JSON payload'}), 400
 
-    url = data.get('url', '').strip()
+    url = payload_str(data, 'url')
 
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
@@ -830,20 +871,39 @@ def summarize() -> ResponseReturnValue:
         return jsonify(out)
 
     try:
-        import trafilatura
         import requests as _req
-        # Fetch via requests so SSRF redirect chain can be validated
+        import trafilatura
+        # Fetch via requests so the SSRF redirect chain can be validated. The
+        # fallback must be reachable ONLY from a transport failure: a bare
+        # `except Exception` also caught the is_safe_url ValueError and the
+        # 400 return path, re-fetching the same URL through trafilatura with
+        # no validation at all.
         try:
-            resp = _req.get(url, timeout=(4, 6), headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True)
-            if resp.status_code != 200:
-                return jsonify({'error': 'Failed to fetch URL'}), 500
-            # Validate final URL after redirects
-            if not is_safe_url(resp.url):
-                return jsonify({'error': 'URL not allowed after redirect'}), 400
-            downloaded = resp.text[:500000]
-        except Exception:
-            # Fallback to trafilatura's fetcher
-            downloaded = trafilatura.fetch_url(url, timeout=6)
+            resp = _req.get(url, timeout=(4, 6), headers={'User-Agent': 'Mozilla/5.0'},
+                            allow_redirects=True, stream=True)
+        except _req.RequestException as e:
+            logger.warning(f"Summarize fetch failed, trying trafilatura: {e}")
+            downloaded = trafilatura.fetch_url(url, timeout=6) or ''
+        else:
+            with resp:
+                if resp.status_code != 200:
+                    return jsonify({'error': 'Failed to fetch URL'}), 500
+                # Validate the FINAL url after redirects, before reading a byte.
+                if not is_safe_url(resp.url):
+                    return jsonify({'error': 'URL not allowed after redirect'}), 400
+                ctype = resp.headers.get('content-type', '')
+                if ctype and 'html' not in ctype.lower() and 'text' not in ctype.lower():
+                    return jsonify({'error': 'URL did not return a text page'}), 415
+                # Stream: resp.text decodes the whole body before slicing, so a
+                # multi-GB response OOMed the worker. MAX_CONTENT_LENGTH only
+                # bounds inbound requests.
+                buf = bytearray()
+                for chunk in resp.iter_content(65536):
+                    buf.extend(chunk)
+                    if len(buf) >= 500000:
+                        break
+                resp.close()
+                downloaded = buf[:500000].decode(resp.encoding or 'utf-8', 'replace')
         if not downloaded:
             return jsonify({'error': 'Failed to fetch URL'}), 500
 
@@ -857,8 +917,8 @@ def summarize() -> ResponseReturnValue:
                 full_text = bare.text or ""
                 title = getattr(bare, "title", "") or ""
                 image = getattr(bare, "image", "") or ""
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"bare_extraction failed: {e}", exc_info=True)
 
         if not full_text:
             # fallback to json extract
@@ -883,19 +943,15 @@ def summarize() -> ResponseReturnValue:
         if not full_text:
             return jsonify({'error': 'Could not extract content'}), 500
 
-        # Enrich to dek + bullets (free, offline) — cap input for speed
-        from pipeline.enrich import _make_dek, _extractive_bullets
+        from pipeline.enrich import _extractive_bullets, _make_dek
         short_text = full_text[:20000]
         dek = _make_dek(short_text, title)
         bullets = _extractive_bullets(short_text, 3, exclude=dek)
-        # ensure not empty
         if not bullets:
-            # fallback single
-            bullets = [short_text[:220].rsplit(" ",1)[0] + "…"] if len(short_text) > 220 else [short_text[:220]]
-        # read_time
+            snippet = short_text[:220]
+            bullets = [snippet.rsplit(" ", 1)[0] + "…" if len(snippet) > 220 else snippet]
         words = len(full_text.split())
         read_time = max(1, round(words / 225))
-        # legacy summary for compat = dek + bullets joined
         summary = dek + (" " + " ".join(bullets) if bullets else "")
 
         payload = {
@@ -908,13 +964,17 @@ def summarize() -> ResponseReturnValue:
             'word_count': words,
             'cached': False,
         }
+        # clear() discards all 500 entries at once, so cycling 501 URLs wipes
+        # the cache every pass while still costing 500 live fetches.
         if len(_summary_cache) > 500:
-            _summary_cache.clear()
+            _summary_cache.pop(next(iter(_summary_cache)))
         _summary_cache[url] = {'ts': time.time(), 'data': payload}
         return jsonify(payload)
-    except Exception as e:
-        logger.warning(f"Failed to summarize {url}: {e}")
-        return jsonify({'error': f"Failed to summarize: {str(e)}"}), 500
+    except Exception:
+        # Do not return str(e): it carries DSNs, hostnames and ports from
+        # requests/psycopg2/trafilatura to an unauthenticated caller.
+        logger.exception(f"Failed to summarize {url}")
+        return jsonify({'error': 'Failed to summarize the URL.'}), 500
 
 
 @app.route('/export/json')
@@ -960,11 +1020,13 @@ def test_webhook() -> ResponseReturnValue:
         if resp.status_code < 300:
             return jsonify({'status': 'Webhook sent successfully'})
         return jsonify({'error': f'Webhook returned {resp.status_code}'}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    except Exception:
+        logger.exception("Webhook test failed")
+        return jsonify({'error': 'Webhook request failed.'}), 500
 
 
 @app.route('/api/email/digest', methods=['POST'])
+@rate_limit("5 per hour")
 def send_email_digest() -> ResponseReturnValue:
     """Sends an email digest of top articles.
     Configure SMTP_* environment variables to use."""
@@ -972,6 +1034,13 @@ def send_email_digest() -> ResponseReturnValue:
     smtp_port = int(os.getenv('SMTP_PORT', '587'))
     smtp_user = os.getenv('SMTP_USER', '')
     smtp_pass = os.getenv('SMTP_PASS', '')
+
+    # Unauthenticated, this endpoint is an open relay: 50 real HTML emails per
+    # minute to any internet address, from the app's own domain. Opt in.
+    # Checked before the SMTP config so the gate is the first thing a caller
+    # hits and a 403 is not a hint about the server's environment.
+    if os.getenv('ALLOW_EMAIL_DIGEST') != '1':
+        return jsonify({'error': 'Email digest is disabled. Set ALLOW_EMAIL_DIGEST=1 to enable.'}), 403
 
     if not all([smtp_host, smtp_user, smtp_pass]):
         return jsonify({
@@ -983,7 +1052,7 @@ def send_email_digest() -> ResponseReturnValue:
     if data is None:
         return jsonify({'error': 'Invalid JSON payload'}), 400
 
-    recipient = data.get('email', '').strip()
+    recipient = payload_str(data, 'email')
     if not recipient or not is_valid_email(recipient):
         return jsonify({'error': 'Valid recipient email required'}), 400
 
@@ -1012,12 +1081,10 @@ def send_email_digest() -> ResponseReturnValue:
         return jsonify({'status': 'Digest sent successfully'})
     except Exception as e:
         logger.error(f"Email send failed: {e}")
-        return jsonify({'error': f'Failed to send: {str(e)}'}), 500
+        return jsonify({'error': 'Failed to send the digest.'}), 500
 
 
-# ──────────────────────────────────────────────
 # PWA Support
-# ──────────────────────────────────────────────
 
 @app.route('/manifest.json')
 def manifest():
@@ -1041,34 +1108,49 @@ def service_worker():
     return app.send_static_file('service-worker.js')
 
 
-# ──────────────────────────────────────────────
 # Error Handlers (Security)
-# ──────────────────────────────────────────────
 
 if _limiter_available:
     from flask_limiter.errors import RateLimitExceeded
 
     @app.errorhandler(RateLimitExceeded)
     def handle_rate_limit(e):
-        return jsonify({
+        # flask-limiter 3.8 never populates e.retry_after (limits 5.6 exposes no
+        # reset_at either), so every 429 shipped {"retry_after": null} with no
+        # Retry-After header. get_expiry() is the window length, which for a
+        # fixed window is a correct upper bound on when the client may retry.
+        try:
+            retry_after = max(1, int(e.limit.limit.get_expiry()))
+        except (AttributeError, TypeError, ValueError):
+            retry_after = None
+        response = jsonify({
             'error': 'rate_limit_exceeded',
             'message': 'Too many requests. Please slow down.',
-            'retry_after': e.retry_after
-        }), 429
+            'retry_after': retry_after,
+        })
+        if retry_after is not None:
+            response.headers['Retry-After'] = str(retry_after)
+        return response, 429
 
 
 @app.errorhandler(400)
 def handle_bad_request(e):
+    if request.accept_mimetypes.accept_html and not request.is_json:
+        return e
     return jsonify({'error': 'bad_request', 'message': 'Invalid request'}), 400
 
 
 @app.errorhandler(404)
 def handle_not_found(e):
+    if request.accept_mimetypes.accept_html and not request.is_json:
+        return e
     return jsonify({'error': 'not_found', 'message': 'Resource not found'}), 404
 
 
 @app.errorhandler(413)
 def handle_payload_too_large(e):
+    if request.accept_mimetypes.accept_html and not request.is_json:
+        return e
     return jsonify({'error': 'payload_too_large', 'message': 'Request body too large'}), 413
 
 
@@ -1082,6 +1164,8 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     port = int(os.environ.get('PORT', 7860))
     debug = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
-    logger.info(f"Starting local dev server on port {port} (debug={debug})...")
-    # ponytail: gunicorn is for production (render.yaml / Dockerfile CMD), not os.system from app
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    # The Werkzeug debugger is an interactive Python shell. Binding it to
+    # 0.0.0.0 turns any leaked FLASK_DEBUG into unauthenticated RCE.
+    host = '127.0.0.1' if debug else '0.0.0.0'
+    logger.info(f"Starting dev server on {host}:{port} (debug={debug})...")
+    app.run(host=host, port=port, debug=debug)
