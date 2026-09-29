@@ -3,12 +3,11 @@ Credibility Scoring Module — Sniffer
 Loads MediaBiasFactCheck CSV and provides domain credibility scoring.
 """
 import csv
+import logging
 import os
 import re
-import logging
-from functools import lru_cache
+from typing import Any
 from urllib.parse import urlparse
-from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +46,11 @@ EXCESSIVE_PUNCT_REGEX = re.compile(r'[!?]{2,}|[.]{3,}')
 class CredibilityScorer:
     """Scores articles based on domain credibility and title heuristics."""
 
-    def __init__(self, csv_path: Optional[str] = None):
-        self.domain_scores: Dict[str, Dict] = {}
+    def __init__(self, csv_path: str | None = None):
+        self.domain_scores: dict[str, dict] = {}
         self._load_csv(csv_path)
 
-    def _load_csv(self, csv_path: Optional[str] = None):
+    def _load_csv(self, csv_path: str | None = None):
         """Load MediaBiasFactCheck CSV into memory."""
         if csv_path is None:
             # Try multiple locations
@@ -71,7 +70,7 @@ class CredibilityScorer:
             return
 
         try:
-            with open(csv_path, 'r', encoding='utf-8') as f:
+            with open(csv_path, encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     domain = row.get('domain', '').strip().lower()
@@ -107,7 +106,7 @@ class CredibilityScorer:
         except Exception:
             return ''
 
-    def _get_domain_match(self, domain: str) -> Optional[Dict]:
+    def _get_domain_match(self, domain: str) -> dict | None:
         """Find best domain match (exact, then parent domain)."""
         if domain in self.domain_scores:
             return self.domain_scores[domain]
@@ -120,7 +119,7 @@ class CredibilityScorer:
                 return self.domain_scores[parent]
         return None
 
-    def _analyze_title(self, title: str) -> Dict[str, any]:
+    def _analyze_title(self, title: str) -> dict[str, Any]:
         """Analyze title for clickbait signals."""
         if not title:
             return {'clickbait_score': 0, 'excessive_punct': False}
@@ -145,7 +144,7 @@ class CredibilityScorer:
             'caps_words': caps_words,
         }
 
-    def score(self, title: str, url: str) -> Tuple[int, Dict]:
+    def score(self, title: str, url: str) -> tuple[int, dict]:
         """
         Score an article (0-100). Higher = more credible.
         Returns (final_score, details_dict).
@@ -189,7 +188,7 @@ class CredibilityScorer:
 
 
 # Global instance (lazy-loaded)
-_scorer: Optional[CredibilityScorer] = None
+_scorer: CredibilityScorer | None = None
 
 
 def get_scorer() -> CredibilityScorer:
@@ -205,6 +204,6 @@ def is_credible(title: str, url: str, threshold: int = 40) -> bool:
     return get_scorer().is_credible(title, url, threshold)
 
 
-def score_article(title: str, url: str) -> Tuple[int, Dict]:
+def score_article(title: str, url: str) -> tuple[int, dict]:
     """Convenience function to get full score details."""
     return get_scorer().score(title, url)
