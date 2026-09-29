@@ -3,23 +3,31 @@ Web Scraper Module — Sniffer
 Uses RSS feeds where available for speed, falls back to HTML scraping.
 Includes caching, health tracking, and retry logic.
 """
+import asyncio
+import logging
+import os
 import re
+import time
+from abc import ABC, abstractmethod
+
+import aiohttp
+import feedparser
 import requests
+from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from bs4 import BeautifulSoup
-import feedparser
-import time
-import logging
-from abc import ABC, abstractmethod
-import aiohttp
-import asyncio
 
 from utils.credibility import is_credible, score_article
 
 logger = logging.getLogger(__name__)
 
 EXCERPT_MAX_LEN = 280
+
+_IMAGE_EXT_RE = re.compile(r"\.(?:jpg|jpeg|png|webp|avif)(?:[?#]|$)")
+_REDDIT_IMAGE_HOSTS = ("i.redd.it", "preview.redd.it")
+# Matched against path segments / host labels / filename parts, never as bare
+# substrings: "self-driving-car-hero.jpg" and "default-city.jpg" are real images.
+_PLACEHOLDER_TOKENS = ("self", "default", "placeholder", "1x1", "blank.gif", "redditstatic")
 
 
 def _parse_feed(url: str):
@@ -30,21 +38,24 @@ def _parse_feed(url: str):
     return feed
 
 
+def _is_placeholder_image(url: str) -> bool:
+    parts = set(url.split("/")[2].split("."))
+    for segment in url.split("/")[3:]:
+        parts.add(segment)
+        parts.add(segment.split(".", 1)[0])
+    return any(token in parts for token in _PLACEHOLDER_TOKENS)
+
+
 def _is_valid_image_url(url: str) -> bool:
-    """Filter out placeholders, 1x1, reddit defaults."""
+    """Accept http(s) URLs that look like a real image, reject placeholders and 1x1s."""
     if not url or not str(url).startswith(("https://", "http://")):
         return False
     u = str(url).lower()
-    # reddit placeholders
-    if any(x in u for x in ["redditstatic", "self", "default", "placeholder", "1x1", "blank.gif"]):
+    if _is_placeholder_image(u):
         return False
-    # must look like image
-    if not re.search(r"\.(jpg|jpeg|png|webp|avif)(\?|$)", u) and "preview.redd.it" not in u and "i.redd.it" not in u:
-        # allow og images without extension if from known hosts
-        if not any(h in u for h in ["i.redd.it", "preview.redd.it", "cdn", "images", "media"]):
-            # still allow if not obviously not image
-            pass
-    return True
+    if any(h in u for h in _REDDIT_IMAGE_HOSTS):
+        return True
+    return bool(_IMAGE_EXT_RE.search(u))
 
 
 def _extract_feed_image(entry) -> str:
@@ -127,7 +138,8 @@ async def _fetch_article_image_async(session: aiohttp.ClientSession, url: str, s
                             continue
                         if h and h < 80:
                             continue
-                    except:
+                    except (ValueError, TypeError, AttributeError):
+                        # Non-numeric width/height attribute: keep the image anyway
                         pass
                     if len(src) > best_len:
                         best, best_len = src, len(src)
@@ -175,8 +187,9 @@ class HackerNewsScraper(BaseScraper):
 
     def __init__(self) -> None:
         super().__init__()
-        # hnrss.org provides a fast, reliable RSS feed for HN
-        self.feed_url: str = "https://hnrss.org/frontpage?count=30"
+        # hnrss.org has no pagination, it serves N items in one feed
+        self.feed_url: str = "https://hnrss.org/frontpage?count={count}"
+        self.items_per_page: int = 30
         self.fallback_url: str = "https://news.ycombinator.com/news"
 
     def scrape(self, num_pages: int = 1) -> list[dict]:
@@ -185,14 +198,11 @@ class HackerNewsScraper(BaseScraper):
         logger.info("[HN] Starting RSS scrape...")
         try:
             # Try RSS first (much faster)
-            feed = _parse_feed(self.feed_url)
+            feed = _parse_feed(self.feed_url.format(count=self.items_per_page * max(1, num_pages)))
             if feed.entries:
                 for entry in feed.entries:
-                    # Extract comments count from the description if available
+                    # hnrss puts points/comments in the description, not in RSS fields
                     comments = "0"
-                    if hasattr(entry, 'comments') and entry.comments:
-                        # comments URL contains item ID
-                        pass
 
                     score = 0
                     # hnrss includes score in description
@@ -201,8 +211,8 @@ class HackerNewsScraper(BaseScraper):
                         if 'Points:' in desc:
                             try:
                                 score = int(desc.split('Points:')[1].split('<')[0].strip())
-                            except (ValueError, IndexError):
-                                pass
+                            except (ValueError, IndexError) as e:
+                                logger.debug(f"[HN] unparsable Points for {entry.link}: {e}")
                         if 'Comments:' in desc:
                             try:
                                 comments = desc.split('Comments:')[1].split('<')[0].strip()
@@ -300,9 +310,9 @@ class HackerNewsScraper(BaseScraper):
                         time_posted = age_elem.text
 
                     links = subtext.find_all('a')
-                    for l in links:
-                        if 'comment' in l.text:
-                            comments = l.text.split()[0]
+                    for link in links:
+                        if 'comment' in link.text:
+                            comments = link.text.split()[0]
                             if comments == 'discuss':
                                 comments = "0"
                             break
@@ -437,7 +447,8 @@ class RedditScraper(BaseScraper):
                         preview_url = p_data.get('preview', {}).get('images', [{}])[0].get('source', {}).get('url', '')
                         if preview_url:
                             preview_url = _html.unescape(preview_url)
-                    except Exception:
+                    except (AttributeError, IndexError, TypeError) as e:
+                        logger.debug(f"[Reddit] no preview image for post {p_data.get('id')}: {e}")
                         preview_url = ""
                     thumb = str(p_data.get('thumbnail', '') or "").strip()
                     link_url = str(p_data.get('url', '') or "").strip()
@@ -445,10 +456,8 @@ class RedditScraper(BaseScraper):
                     if _is_valid_image_url(preview_url):
                         img = preview_url
                     elif _is_valid_image_url(thumb) and thumb not in ("self", "default", "nsfw", "spoiler", "image") and not thumb.endswith(".svg"):
-                        # only keep thumb if it's http and not placeholder
-                        if _is_valid_image_url(thumb):
-                            img = thumb
-                    elif _is_valid_image_url(link_url) and re.search(r"\.(jpg|jpeg|png|webp)(\?|$)", link_url, re.I):
+                        img = thumb
+                    elif _is_valid_image_url(link_url) and re.search(r"\.(jpg|jpeg|png|webp)(\?|$)", link_url, re.IGNORECASE):
                         img = link_url
 
                     articles.append({
@@ -460,9 +469,14 @@ class RedditScraper(BaseScraper):
                         'comments': str(p_data.get('num_comments', 0)),
                         'source': 'Reddit',
                         'excerpt': excerpt,
-                        'image_url': img if _is_valid_image_url(img) else "",
+                        'image_url': img,
                     })
-            self.last_status = "ok"
+                self.last_status = "ok"
+                self.last_error = ""
+            else:
+                self.last_status = "error"
+                self.last_error = f"HTTP {response.status_code} from {self.base_url}"
+                logger.warning(f"[Reddit] {self.last_error}")
         except requests.RequestException as e:
             self.last_status = "error"
             self.last_error = str(e)
@@ -481,7 +495,6 @@ class GithubTrendingScraper(BaseScraper):
         super().__init__()
         self.base_url = "https://api.github.com/search/repositories"
         # Use token if available to avoid 60 req/h limit
-        import os
         token = os.getenv("GITHUB_TOKEN", "").strip()
         if token:
             self.session.headers.update({"Authorization": f"Bearer {token}"})
@@ -492,7 +505,6 @@ class GithubTrendingScraper(BaseScraper):
         articles = []
         logger.info("[GitHub] Starting API scrape...")
         try:
-            # ponytail: 1 page = 20 repos, paginate via ?page= if needed
             for page in range(1, num_pages + 1):
                 params = {
                     "q": "stars:>5000",
@@ -504,10 +516,15 @@ class GithubTrendingScraper(BaseScraper):
                 resp = self.session.get(self.base_url, params=params, timeout=10)
                 # handle rate limit
                 if resp.status_code == 403 and "rate limit" in resp.text.lower():
-                    logger.warning(f"[GitHub] rate limited, remaining {resp.headers.get('X-RateLimit-Remaining')}")
+                    remaining = resp.headers.get('X-RateLimit-Remaining')
+                    self.last_status = "error"
+                    self.last_error = f"rate limited (HTTP 403, remaining {remaining})"
+                    logger.warning(f"[GitHub] {self.last_error}")
                     break
                 if resp.status_code != 200:
-                    logger.warning(f"[GitHub] HTTP {resp.status_code}: {resp.text[:200]}")
+                    self.last_status = "error"
+                    self.last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    logger.warning(f"[GitHub] {self.last_error}")
                     break
                 data = resp.json()
                 for repo in data.get("items", [])[:20]:
@@ -523,11 +540,12 @@ class GithubTrendingScraper(BaseScraper):
                         "excerpt": excerpt,
                         "image_url": (repo.get("owner") or {}).get("avatar_url", ""),
                     })
+                self.last_status = "ok"
+                self.last_error = ""
                 if len(data.get("items", [])) < 20:
                     break
                 if page < num_pages:
                     time.sleep(1)
-            self.last_status = "ok"
         except Exception as e:
             self.last_status = "error"
             self.last_error = str(e)
@@ -551,7 +569,6 @@ class ArxivScraper(BaseScraper):
         articles = []
         logger.info("[arXiv] Starting Atom scrape...")
         try:
-            # ponytail: 1 page = 20 papers, paginate via start
             for page in range(num_pages):
                 params = {
                     "search_query": "cat:cs.AI OR cat:cs.LG OR cat:cs.DC",
@@ -573,13 +590,11 @@ class ArxivScraper(BaseScraper):
                     try:
                         if hasattr(entry, "authors") and entry.authors:
                             author = ", ".join(a.get("name", "") for a in entry.authors[:2])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[arXiv] no authors for {getattr(entry, 'id', '')}: {e}")
                     excerpt = _clean_excerpt(getattr(entry, "summary", "") or "")
-                    link = getattr(entry, "link", "") or getattr(entry, "id", "")
-                    # prefer arxiv abs link
-                    if hasattr(entry, "id"):
-                        link = entry.id
+                    # arXiv Atom always sets id, and it is the canonical abs URL
+                    link = entry.id
                     articles.append({
                         "title": getattr(entry, "title", "").replace("\n", " ").strip(),
                         "link": link,
@@ -611,8 +626,10 @@ class NewsAggregator:
     """Aggregates articles from all scrapers with caching and health tracking."""
 
     CACHE_TTL = 300  # 5 minutes
+    IMAGE_ENRICH_MAX = 32
+    IMAGE_ENRICH_SKIP_SOURCES = frozenset({"arXiv", "GitHub Trending"})
 
-    def __init__(self, include_extra: bool = True) -> None:
+    def __init__(self) -> None:
         self.scrapers: list[BaseScraper] = [
             HackerNewsScraper(),
             TechCrunchScraper(),
@@ -620,11 +637,9 @@ class NewsAggregator:
             TheVergeScraper(),
             ArsTechnicaScraper(),
         ]
-        if include_extra:
-            # ponytail: 2 extra heterogeneous sources for variety (JSON+XML), disabled via SNIFFER_MINIMAL=1
-            import os as _os
-            if _os.getenv("SNIFFER_MINIMAL") != "1":
-                self.scrapers.extend([GithubTrendingScraper(), ArxivScraper()])
+        # 2 extra heterogeneous sources (JSON+XML), disabled via SNIFFER_MINIMAL=1
+        if os.getenv("SNIFFER_MINIMAL") != "1":
+            self.scrapers.extend([GithubTrendingScraper(), ArxivScraper()])
         self.articles: list[dict] = []
         self._last_scrape_time: float = 0
 
@@ -649,6 +664,11 @@ class NewsAggregator:
             if isinstance(result, Exception):
                 logger.error(f"Scraper {scraper.__class__.__name__} failed: {result}")
                 continue
+            if not result:
+                logger.warning(
+                    f"[{scraper.__class__.__name__}] 0 articles "
+                    f"(status={scraper.last_status}, error={scraper.last_error or 'none'})"
+                )
             if result:
                 # Apply credibility filter before adding
                 valid_articles = []
@@ -683,11 +703,14 @@ class NewsAggregator:
 
     async def _enrich_images_async(self) -> None:
         """Fetch real images for articles missing image_url concurrently (bounded)."""
-        missing = [a for a in self.articles if not a.get('image_url')]
+        missing = [a for a in self.articles
+                   if not a.get('image_url') and a.get('source') not in self.IMAGE_ENRICH_SKIP_SOURCES]
         if not missing:
             return
+        if len(missing) > self.IMAGE_ENRICH_MAX:
+            logger.info(f"Image enrichment capped at {self.IMAGE_ENRICH_MAX} of {len(missing)} candidates")
+            missing = missing[:self.IMAGE_ENRICH_MAX]
         logger.info(f"Enriching images for {len(missing)} articles...")
-        # ponytail: bounded concurrency to avoid socket exhaustion / 429
         sem = asyncio.Semaphore(8)
         async with aiohttp.ClientSession(headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'}) as session:
             tasks = [_fetch_article_image_async(session, a['link'], sem) for a in missing]
