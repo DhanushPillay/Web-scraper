@@ -1,7 +1,7 @@
 # Sniffer: The Zero-Cost Cloud-Native Data Lakehouse
 
 ![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
-![PySpark](https://img.shields.io/badge/Apache%20Spark-3.5-E25A1C?logo=apachespark&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-3.1%2B-000000?logo=flask&logoColor=white)
 ![DuckDB](https://img.shields.io/badge/DuckDB-In--Memory%20OLAP-FFF000?logo=duckdb&logoColor=black)
 ![Pytest](https://img.shields.io/badge/tests-15%20passed%20(100%25)-brightgreen)
 ![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
@@ -19,9 +19,9 @@ It is an automated data engineering pipeline that scrapes multiple tech sources 
 
 ## How it Works: The Split-Layer Architecture
 
-To process heavy Natural Language Processing tasks (like NLTK sentiment analysis and Sumy summarization) without crashing free-tier web hosts, I designed a split-layer architecture. 
+To keep NLTK sentiment analysis, the article body fetches and the analytical marts off the free-tier web host, I split the work across two runtimes. 
 
-This guarantees absolute stability for the web application while pushing all the memory-intensive compute to GitHub Actions. Here is how the data flows from the messy internet down to the clean dashboard:
+This keeps the web application small and stable while the memory-intensive work runs in GitHub Actions. Here is how the data flows from the messy internet down to the clean dashboard:
 
 ```mermaid
 flowchart TD
@@ -41,7 +41,7 @@ flowchart TD
     end
 
     %% Ingestion (GitHub Actions)
-    Ingest[GitHub Actions Background Worker<br/>Heavy NLP & Extraction]:::source
+    Ingest[GitHub Actions Worker<br/>Scraping & Extraction]:::source
     
     RSS & REST & XML --> Ingest
     Ingest -->|0 articles from every source| FailRun([Fail the run red<br/>exit 1 — a dead feed must not look healthy]):::error
@@ -58,9 +58,9 @@ flowchart TD
     Validate -->|Passes| Silver[(Silver Layer<br/>Snappy Parquet)]:::silver
     
     %% Gold
-    Spark[PySpark / DuckDB<br/>Aggregations & Ranking]:::source
-    Silver --> Spark
-    Spark --> Gold[(Gold Layer<br/>Analytical Marts)]:::gold
+    GoldJob[DuckDB<br/>Window Rankings & Aggregates]:::source
+    Silver --> GoldJob
+    GoldJob --> Gold[(Gold Layer<br/>Analytical Marts)]:::gold
     
     %% Serving
     Gold --> DB[(Neon Postgres<br/>Serverless Database)]:::serve
@@ -68,29 +68,32 @@ flowchart TD
 ```
 
 ### 1. The Heavy Lifter: GitHub Actions (Background Worker)
-Every hour, a scheduled GitHub Action spins up an Ubuntu runner, giving the pipeline access to roughly 7GB of RAM for free. It executes the background scraping routine which:
-- Scrapes the latest articles from Hacker News and other tech sources.
+Every hour a scheduled GitHub Action spins up a hosted Ubuntu runner, free on a public repository. It executes the background scraping routine which:
+- Scrapes the latest articles from Hacker News and six other sources.
 - Uses Trafilatura to extract the full text of articles.
 - Runs NLTK Vader to perform sentiment analysis and computes reading times.
-- Connects to the database and upserts this rich metadata.
+- Writes that metadata back in one connection and one `executemany`, not one transaction per row.
 - Fails loudly (`exit 1`) when zero articles scrape from every source, so a dead feed turns the run red instead of passing silently.
-- Logs honest accounting (`Inserted N new, skipped M duplicates`) — duplicates ignored by `ON CONFLICT DO NOTHING` are counted, not hidden.
+- Logs honest accounting (`Inserted N new, skipped M duplicates`). `inserted` comes from `cursor.rowcount` after the write, so rows that another session inserted first are not counted as new.
+- Runs retention and the metadata backlog drain on every run, including a zero-article one. Prune is the only thing that deletes rows, so skipping it during a feed outage let the table grow without bound.
+- Raises if an NLTK resource cannot be downloaded, before anything is written to the database, and aborts on a broken VADER lexicon instead of stamping `neutral/0.0` and marking the row processed for good.
 - Sets `SNIFFER_REQUIRE_POSTGRES=1`, so an unreachable database fails the run instead of writing to an ephemeral runner-local SQLite file that vanishes with the runner.
-- Initializes NLTK lazily, only when there is metadata to compute — empty runs exit before downloading data or loading the lexicon.
+- Initializes NLTK lazily, only when there is metadata to compute, so empty runs exit before downloading data or loading the lexicon.
 - Logs per-phase timings (`Phase scrape/enrich/db-write+prune took …s`) so the hourly run's cost breakdown is visible in every log.
 
 ### 2. The Presentation Layer: Render (Web Dashboard)
-The web application runs on Render and is completely decoupled from the scraping process. It acts as a highly optimized, read-only presentation layer. It connects to the database to serve the pre-computed NLP metadata. If a user requests a summary on the fly, it relies on a custom, lightweight TF-IDF word frequency algorithm to generate summaries without needing heavy dependencies.
+The web application runs on Render and is decoupled from the scraping process. It is a read-only presentation layer over the database, and it serves the pre-computed NLP metadata. On-demand summaries come from an offline extractive summarizer: a normalized first-sentence dek plus word-frequency bullets, with Jaccard dedup so the dek is not repeated as a bullet. No LLM, no extra dependency.
 
 ---
 
 ## Key Engineering Features
 
 1. **Heterogeneous Multi-Protocol Ingestion**: Not all APIs are created equal. Sniffer pulls data simultaneously from RSS, JSON REST APIs, and XML Atom feeds using async Python with built-in retry logic.
-2. **Decoupled Architecture for Stability**: By separating the heavy NLP processing into GitHub Actions and keeping the web app lightweight, the system avoids memory crashes entirely on free-tier platforms.
-3. **Resilient Database Connections**: Incorporates exponential backoff retry logic to handle serverless database "cold starts" gracefully.
-4. **Columnar Storage**: Data is saved as Hive-partitioned Snappy Parquet files. This compresses data heavily and allows embedded engines like DuckDB to query gigabytes of data in milliseconds.
-5. **Premium Editorial UI**: The front-end is not just a generic template. It features a bespoke, high-contrast dark mode with tactile micro-animations and a slide-out drawer for "Quick Reads" to create a premium reading experience.
+2. **Decoupled Architecture for Stability**: By separating scraping, enrichment and the analytical marts into GitHub Actions and keeping the web app lightweight, the system avoids memory crashes entirely on free-tier platforms.
+3. **Resilient Database Connections**: The Postgres pool is sized for the gunicorn thread count (`SNIFFER_PG_POOL_MIN`, default 4) so warm connections are actually reused, and a transient failure degrades to a local SQLite file for that one request instead of pinning the worker to it for the life of the process.
+4. **Columnar Storage**: Data is saved as Hive-partitioned Snappy Parquet files. This compresses data heavily and allows an embedded engine like DuckDB to query it directly from disk. A Silver partition is wiped and rewritten on every run, so re-running the same day no longer appends a second copy of every row.
+5. **Idempotent Bronze Appends**: Each Bronze partition is written under an `O_CREAT|O_EXCL` lock sentinel that is reclaimed after 300 seconds, and every line is parsed independently, so one corrupt line or a crashed run cannot duplicate or wedge a partition.
+6. **Premium Editorial UI**: The front-end is not a generic template. It has a bespoke high-contrast dark mode with micro-animations and a slide-out drawer for Quick Reads. The template carries no inline event handlers, which lets the CSP ship `script-src 'self'` with `script-src-attr 'none'`.
 
 ---
 
@@ -105,7 +108,7 @@ Building a Data Lakehouse usually means spending hundreds of dollars on AWS or G
 | **Analytics Engine**| DuckDB (Embedded C++ engine, no servers needed) | $0 |
 | **Web Hosting** | Render (Free Web Service tier) | $0 |
 
-> **Note on Enterprise IaC**: You will notice an `infrastructure/main.tf` and `sql/athena.sql` file in this repository. While this project runs on a free stack, I have included the Terraform code necessary to deploy this pipeline onto a highly-scalable AWS environment (S3, Glue, Athena) to demonstrate enterprise readiness.
+> **Live path vs. showcase**: The Flask app, the two GitHub Actions workflows and DuckDB are the live stack. `infrastructure/main.tf` (S3, Glue, Athena), `sql/athena.sql` and `dags/` are portfolio material: they show what the same pipeline maps to on AWS and on a managed orchestrator, and nothing in the free stack runs them. The optional `HF_DATASET` lookup is only a fallback the app tries when no local Gold partition exists.
 
 ---
 
@@ -125,7 +128,7 @@ source .venv/bin/activate
 
 # Install the lightweight web dependencies
 pip install -r requirements.txt
-# Install the heavy NLP dependencies (if you want to run the scraper locally)
+# Add nltk, which only the scraper's sentiment pass needs
 pip install -r requirements-actions.txt
 ```
 
@@ -134,7 +137,7 @@ pip install -r requirements-actions.txt
 # Export your database URL (Neon Postgres or local SQLite/Postgres)
 export DATABASE_URL="postgresql://user:pass@host/dbname"
 
-# Run the heavy scraper
+# Run the scraper (exits 1 if DATABASE_URL is unset or no feed returns an article)
 python scripts/github_scrape.py
 ```
 
@@ -145,30 +148,40 @@ python src/app.py
 # Open http://localhost:7860 to see the UI.
 ```
 
+### 4. Build the Lakehouse Locally
+```bash
+pip install -r requirements-actions.txt
+# Bronze -> validation -> Silver Parquet -> Gold marts for today
+python src/pipeline/run.py
+# Reprocess an existing day without hitting the feeds again
+python src/pipeline/run.py --no-scrape --day 2026-08-22
+```
+
 ---
 
 ## Project Structure
 
 ```text
 Web-scraper/
-├── .github/workflows/       # CI/CD, hourly scraping, daily tests + lakehouse build
-├── dags/                    # Apache Airflow orchestration DAGs
-├── data/                    # The Data Lake (Bronze JSONL, Silver/Gold Parquet)
+├── .github/workflows/       # CI/CD: hourly scrape job, daily tests + lakehouse build
+├── dags/                    # Apache Airflow DAG (showcase, not run by CI)
+├── data/                    # The Data Lake (Bronze JSONL, Silver/Gold Parquet, quarantine, logs)
 ├── doc/                     # Deep-dive technical documentation
-├── infrastructure/          # Terraform (AWS Enterprise architecture stubs)
-├── scripts/                 # Heavy background workers (github_scrape.py)
-├── sql/                     # Athena queries for the AWS deployment path
+├── infrastructure/          # Terraform (AWS showcase, not deployed)
+├── scripts/                 # Background worker (github_scrape.py)
+├── sql/                     # Athena/Glue DDL + queries for the AWS showcase path
 ├── src/
-│   ├── app.py               # Lightweight Flask Web Application
+│   ├── app.py               # Flask Web Application (routes, SSE scrape, API)
 │   ├── categories.py        # Single category keyword map + classifier
-│   ├── database.py          # Resilient PostgreSQL connection manager
-│   ├── pipeline/            # Core ETL logic (ingest, validate, transform, enrich)
-│   ├── processing/          # PySpark/DuckDB analytical jobs
-│   ├── static/ & templates/ # HTML, CSS, and JS for the Premium Editorial UI
+│   ├── database.py          # SQLite / PostgreSQL connection manager + queries
+│   ├── pipeline/            # Core ETL logic (ingest, validate, transform, enrich, run)
+│   ├── processing/          # DuckDB Gold marts
+│   ├── static/ & templates/ # HTML, CSS, JS, service worker for the UI
+│   ├── utils/               # Credibility scoring
 │   └── web_scraper.py       # Core scraping logic
-├── tests/                   # Pytest suite (100% passing)
-├── requirements.txt         # Lightweight dependencies for the web server
-└── requirements-actions.txt # Heavy NLP dependencies for the GitHub Action
+├── tests/                   # Pytest suite (15 tests)
+├── requirements.txt         # Web server dependencies (flask>=3.1)
+└── requirements-actions.txt # requirements.txt plus nltk, for the Action
 ```
 
 ---
