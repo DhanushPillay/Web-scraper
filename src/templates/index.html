@@ -7,9 +7,23 @@
     <title>Sniffer · Tech Briefing</title>
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#F6F8FB">
-    <link rel="stylesheet" href="/static/css/app.css?v=4.1">
+    <link rel="stylesheet" href="/static/css/app.css?v=5">
 </head>
 <body class="sn-layout">
+    {#- Single source of truth: (filter value, short label, prose name). -#}
+    {% set sources = [
+        ('Hacker News', 'HN', 'Hacker News'),
+        ('TechCrunch', 'TC', 'TechCrunch'),
+        ('Reddit', 'Reddit', 'Reddit'),
+        ('The Verge', 'Verge', 'The Verge'),
+        ('Ars Technica', 'Ars', 'Ars Technica'),
+        ('GitHub Trending', 'GitHub', 'GitHub'),
+        ('arXiv', 'arXiv', 'arXiv'),
+    ] %}
+    {% set cats = ['all', 'AI & ML', 'Security', 'Hardware', 'Software', 'Business', 'Science', 'Gaming', 'Social Media'] %}
+    {% macro source_list(sep=' · ') %}{% for v, s, p in sources %}{{ s }}{{ sep if not loop.last }}{% endfor %}{% endmacro %}
+    {% macro source_dots() %}{% for v, s, p in sources %}<span><i class="sn-source-dot" data-src="{{ v }}"></i>{{ s }}</span>{% endfor %}{% endmacro %}
+    {% macro topic_chips(el, cls) %}<{{ el }} class="{{ cls }}" aria-label="Topics">{% for c in cats %}<a class="sn-chip {% if (category_filter|default('all')) == c %}is-active{% endif %}" href="{{ url_for('index', keyword=keyword|default(''), source=source_filter|default('all'), category=c, sort=sort_by|default('score')) }}">{{ 'All topics' if c == 'all' else c }}</a>{% endfor %}</{{ el }}>{% endmacro %}
     <a href="#feed" class="sn-skip">Skip to stories</a>
 
     <header class="sn-masthead">
@@ -30,8 +44,8 @@
         </div>
         <div class="sn-ticker" aria-hidden="true">
             <div class="sn-ticker-track">
-                <span>{{ total_count }} stories indexed · {{ stats.today if stats else 0 }} new today · HN · TechCrunch · Reddit · Verge · Ars · GitHub · arXiv ·&nbsp;</span>
-                <span>{{ total_count }} stories indexed · {{ stats.today if stats else 0 }} new today · HN · TechCrunch · Reddit · Verge · Ars · GitHub · arXiv ·&nbsp;</span>
+                <span>{{ total_count }} stories indexed · {{ stats.today if stats else 0 }} new today · {{ source_list() }} ·&nbsp;</span>
+                <span>{{ total_count }} stories indexed · {{ stats.today if stats else 0 }} new today · {{ source_list() }} ·&nbsp;</span>
             </div>
         </div>
     </header>
@@ -40,23 +54,9 @@
         {% if not showing_saved %}
         <aside class="sn-rail-left" aria-label="Topics">
             <div class="sn-rail-title">Topics</div>
-            <nav class="sn-topics-col">
-                {% set cats = ['all', 'AI & ML', 'Security', 'Hardware', 'Software', 'Business', 'Science', 'Gaming', 'Social Media'] %}
-                {% for c in cats %}
-                <a class="sn-chip {% if (category_filter|default('all')) == c %}is-active{% endif %}"
-                   href="{{ url_for('index', keyword=keyword|default(''), source=source_filter|default('all'), category=c, sort=sort_by|default('score')) }}">{{ 'All topics' if c == 'all' else c }}</a>
-                {% endfor %}
-            </nav>
+            {{ topic_chips('nav', 'sn-topics-col') }}
             <div class="sn-rail-title">Sources</div>
-            <div class="sn-mini-sources">
-                <span><i class="sn-source-dot" data-src="Hacker News"></i>HN</span>
-                <span><i class="sn-source-dot" data-src="TechCrunch"></i>TC</span>
-                <span><i class="sn-source-dot" data-src="Reddit"></i>Reddit</span>
-                <span><i class="sn-source-dot" data-src="The Verge"></i>Verge</span>
-                <span><i class="sn-source-dot" data-src="Ars Technica"></i>Ars</span>
-                <span><i class="sn-source-dot" data-src="GitHub Trending"></i>GitHub</span>
-                <span><i class="sn-source-dot" data-src="arXiv"></i>arXiv</span>
-            </div>
+            <div class="sn-mini-sources">{{ source_dots() }}</div>
         </aside>
         {% endif %}
 
@@ -83,7 +83,7 @@
                         <h1 class="sn-page-title reveal">
                             {% if showing_saved %}Saved Archive{% elif keyword %}“{{ keyword }}”{% else %}Today's Briefing{% endif %}
                         </h1>
-                        <p class="sn-standfirst">Ranked for signal over noise across Hacker News, TechCrunch, Reddit, The Verge, Ars Technica, GitHub and arXiv.</p>
+                        <p class="sn-standfirst">{% set prose = sources|map(attribute=2)|list %}Ranked for signal over noise across {{ prose[:-1]|join(', ') }} and {{ prose[-1] }}.</p>
                     </div>
                     <div class="sn-hero-meta">
                         <div class="sn-hero-stat"><strong>{{ total_count }}</strong><span>stories</span></div>
@@ -94,32 +94,20 @@
             </header>
 
             {% if not showing_saved %}
-            <div class="sn-topics-row" aria-label="Topics">
-                {% set cats = ['all', 'AI & ML', 'Security', 'Hardware', 'Software', 'Business', 'Science', 'Gaming', 'Social Media'] %}
-                {% for c in cats %}
-                <a class="sn-chip {% if (category_filter|default('all')) == c %}is-active{% endif %}"
-                   href="{{ url_for('index', keyword=keyword|default(''), source=source_filter|default('all'), category=c, sort=sort_by|default('score')) }}">{{ 'All topics' if c == 'all' else c }}</a>
-                {% endfor %}
-            </div>
+            {{ topic_chips('div', 'sn-topics-row') }}
             <form class="sn-filter-row" method="GET" action="{{ url_for('index') }}">
                 <input type="hidden" name="keyword" value="{{ keyword|default('') }}">
                 <input type="hidden" name="category" value="{{ category_filter|default('all') }}">
                 <label class="sn-filter">
                     <span class="sn-filter-label">Source</span>
-                    <select name="source" onchange="this.form.submit()">
+                    <select name="source">
                         <option value="all" {% if source_filter=='all' %}selected{% endif %}>All sources</option>
-                        <option value="Hacker News" {% if source_filter=='Hacker News' %}selected{% endif %}>Hacker News</option>
-                        <option value="TechCrunch" {% if source_filter=='TechCrunch' %}selected{% endif %}>TechCrunch</option>
-                        <option value="Reddit" {% if source_filter=='Reddit' %}selected{% endif %}>Reddit</option>
-                        <option value="The Verge" {% if source_filter=='The Verge' %}selected{% endif %}>The Verge</option>
-                        <option value="Ars Technica" {% if source_filter=='Ars Technica' %}selected{% endif %}>Ars Technica</option>
-                        <option value="GitHub Trending" {% if source_filter=='GitHub Trending' %}selected{% endif %}>GitHub</option>
-                        <option value="arXiv" {% if source_filter=='arXiv' %}selected{% endif %}>arXiv</option>
+                        {% for v, s, p in sources %}<option value="{{ v }}" {% if source_filter==v %}selected{% endif %}>{{ p }}</option>{% endfor %}
                     </select>
                 </label>
                 <label class="sn-filter">
                     <span class="sn-filter-label">Order</span>
-                    <select name="sort" onchange="this.form.submit()">
+                    <select name="sort">
                         <option value="score" {% if sort_by=='score' %}selected{% endif %}>Top rated</option>
                         <option value="newest" {% if sort_by=='newest' %}selected{% endif %}>Newest</option>
                         <option value="comments" {% if sort_by=='comments' %}selected{% endif %}>Most discussed</option>
@@ -152,7 +140,7 @@
                         </div>
                         {% if article.image_url %}
                         <a href="{{ article.link }}" target="_blank" rel="noopener" class="sn-card-media" tabindex="-1" aria-hidden="true">
-                            <img src="{{ article.image_url }}" alt="" loading="eager" fetchpriority="high" decoding="async" width="960" height="540" onerror="this.closest('.sn-card-media').style.display='none'">
+                            <img src="{{ article.image_url }}" alt="" loading="eager" fetchpriority="high" decoding="async" width="960" height="540">
                         </a>
                         {% endif %}
                     </article>
@@ -174,7 +162,7 @@
                         </div>
                         {% if article.image_url %}
                         <a href="{{ article.link }}" target="_blank" rel="noopener" class="sn-card-media sm" tabindex="-1" aria-hidden="true">
-                            <img src="{{ article.image_url }}" alt="" loading="lazy" decoding="async" width="640" height="360" onerror="this.closest('.sn-card-media').style.display='none'">
+                            <img src="{{ article.image_url }}" alt="" loading="lazy" decoding="async" width="640" height="360">
                         </a>
                         {% endif %}
                     </article>
@@ -199,7 +187,7 @@
                         </div>
                         {% if article.image_url and loop.index <= 20 %}
                         <a href="{{ article.link }}" target="_blank" rel="noopener" class="sn-row-thumb" tabindex="-1" aria-hidden="true">
-                            <img src="{{ article.image_url }}" alt="" loading="lazy" decoding="async" width="320" height="180" onerror="this.closest('.sn-row-thumb').style.display='none'">
+                            <img src="{{ article.image_url }}" alt="" loading="lazy" decoding="async" width="320" height="180">
                         </a>
                         {% endif %}
                     </article>
@@ -242,7 +230,7 @@
             <div class="sn-panel">
                 <div class="sn-rail-title">Briefing</div>
                 <p class="sn-panel-text">{{ total_count }} stories · {{ stats.today if stats else 0 }} new · {{ stats.saved if stats else 0 }} saved</p>
-                <p class="sn-panel-text dim">HN · TC · Reddit · Verge · Ars · GitHub · arXiv</p>
+                <p class="sn-panel-text dim">{{ source_list() }}</p>
             </div>
         </aside>
     </div>
@@ -263,7 +251,7 @@
             </button>
         </header>
         <div id="drawerBody" class="sn-drawer-content">
-            <div id="drawerContent"><div class="sn-loader">Fetching summary…</div></div>
+            <div class="sn-loader">Fetching summary…</div>
         </div>
         <footer class="sn-drawer-footer">
             <a id="drawerLink" href="#" target="_blank" rel="noopener" class="sn-btn sn-btn-accent">Read full article →</a>
@@ -279,12 +267,13 @@
                 <div id="scrapeProgressFill" class="sn-progress-fill"></div>
             </div>
             <span id="scrapePct" class="sn-progress-pct">0%</span>
+            <button type="button" id="scrapeDismiss" class="sn-btn sn-btn-ghost sn-btn-sm sn-loading-dismiss" hidden>Close</button>
         </div>
     </div>
 
     <div id="toastContainer" aria-live="polite"></div>
     <button id="scrollTop" aria-label="Back to top">↑</button>
 
-    <script src="/static/js/app.js?v=4.1" defer></script>
+    <script src="/static/js/app.js?v=5" defer></script>
 </body>
 </html>
