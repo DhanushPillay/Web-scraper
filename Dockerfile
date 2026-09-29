@@ -20,17 +20,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download NLTK data during build (removed)
-# Copy project
 COPY . .
 
 # Change ownership to a non-root user (Hugging Face Spaces requirement)
-RUN useradd -m -u 1000 user
+RUN useradd -m -u 1000 user && chown -R user:user /app
 USER user
 
-# Expose port
 EXPOSE 7860
 
-# Run gunicorn on port 7860 (from src module)
+# RENDER=true enables the free-tier memory guard (skips per-article og:image
+# fan-out in /api/scrape, which OOMs a 512MB container).
 ENV PYTHONPATH=/app/src
-CMD ["gunicorn", "-b", "0.0.0.0:7860", "-w", "2", "src.app:app"]
+ENV RENDER=true
+# 300s: an SSE scrape holds a worker for the whole stream, so gunicorn's 30s
+# default would kill it mid-scrape and silently discard the run.
+CMD ["gunicorn", "-b", "0.0.0.0:7860", "-w", "2", "--timeout", "300", "src.app:app"]
