@@ -7,11 +7,9 @@ Comprehensive unit and integration tests covering:
 - Credibility scoring, FTS5 sanitization, personalized feed, and NLP read-time estimation.
 """
 import json
-import sys
 import os
-import shutil
-import tempfile
-from pathlib import Path
+import sys
+
 import pytest
 
 # Ensure environment flags for isolated testing
@@ -19,15 +17,13 @@ os.environ["SNIFFER_NO_AUTO_INIT"] = "1"
 sys.path.insert(0, os.path.abspath("src"))
 
 from pipeline.ingest import generate_record_hash, write_bronze
-from pipeline.validate import (
-    validate_article_record, validate_batch, is_valid_url
-)
-from pipeline.transform import to_silver, _classify_title
+from pipeline.transform import to_silver
+from pipeline.validate import is_valid_url, validate_article_record, validate_batch
 from processing.spark_job import run_gold_duckdb
-from web_scraper import _clean_excerpt
-from utils.credibility import get_scorer
-from src.app import is_safe_url, classify_article
+from src.app import classify_article, is_safe_url
 from src.database import Database
+from utils.credibility import get_scorer
+from web_scraper import _clean_excerpt
 
 
 @pytest.fixture
@@ -255,6 +251,276 @@ def test_add_articles_honest_counts(tmp_path):
     assert db.add_articles([]) == (0, 0)
 
 
+def test_add_articles_drops_linkless_rows_without_losing_the_batch(tmp_path):
+    """A row with no link can never satisfy link TEXT UNIQUE NOT NULL.
+
+    Its presence used to abort the whole executemany, and the failure was
+    reported as (0, len(articles)) — indistinguishable from "all duplicates".
+    """
+    db = Database(str(tmp_path / "linkless.db"))
+    batch = [
+        _article("https://e.com/ok1", "Good one"),
+        {"title": "No link", "source": "Reddit", "excerpt": "x"},
+        _article("https://e.com/ok2", "Good two"),
+    ]
+    inserted, skipped = db.add_articles(batch)
+    assert (inserted, skipped) == (2, 1)
+    assert db.get_article_count() == 2
+    titles = {a["title"] for a in db.get_articles(limit=10)}
+    assert titles == {"Good one", "Good two"}
+    # An all-linkless batch inserts nothing rather than raising.
+    assert db.add_articles([{"title": "still no link"}]) == (0, 0)
+
+
+def test_add_articles_raises_on_db_error(tmp_path, monkeypatch):
+    """A failed insert must not masquerade as (0, N)."""
+    db = Database(str(tmp_path / "boom.db"))
+
+    def _explode(*a, **k):
+        raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(db, "get_connection", _explode)
+    with pytest.raises(RuntimeError):
+        db.add_articles([_article("https://e.com/x")])
+
+
+def test_keyword_like_wildcards_are_escaped(tmp_path):
+    """`_` is a LIKE wildcard; unescaped it matched the whole table and made
+    the pager report the wrong page count."""
+    db = Database(str(tmp_path / "like.db"))
+    db.add_articles([
+        {"title": "React hooks deep dive", "link": "https://e.com/1", "source": "HN"},
+        {"title": "Postgres index tuning", "link": "https://e.com/2", "source": "HN"},
+        {"title": "snake_case naming explained", "link": "https://e.com/3", "source": "HN"},
+    ])
+    assert len(db.get_articles(keyword="_", limit=10)) == 1
+    assert db.get_total_count(keyword="_") == 1
+    assert db.get_articles(keyword="%", limit=10) == []
+    assert db.get_articles(keyword="React", limit=10)[0]["title"] == "React hooks deep dive"
+
+
+def test_toggle_flag_treats_null_as_unset(tmp_path):
+    """`not None` is True, so a NULL column used to read as "saved"."""
+    db = Database(str(tmp_path / "toggle.db"))
+    db.add_articles([_article("https://e.com/1")])
+    aid = db.get_articles(limit=1)[0]["id"]
+    with db.get_connection() as conn:
+        conn.execute(f"UPDATE articles SET is_saved = NULL WHERE id = {db._ph(1)}", (aid,))
+        conn.commit()
+    assert db.toggle_bookmark(aid) is True
+    assert db.toggle_bookmark(aid) is False
+    assert db.toggle_read(aid) is True
+    assert db.toggle_read(99999) is None
+
+
+def test_gold_stats_read_one_mart(tmp_path, monkeypatch):
+    """The old data/gold/** glob spanned three incompatible schemas.
+
+    DuckDB bound the alphabetically-first file and raised BinderException,
+    which a bare `except Exception: pass` swallowed — so Gold stats were
+    permanently unreachable from the dashboard.
+    """
+    from datetime import datetime, timezone
+
+    import pandas as pd
+
+    import src.app as web
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    gold = tmp_path / "data" / "gold" / today
+    gold.mkdir(parents=True)
+    # Decoy mart with a completely different schema and an alphabetically
+    # earlier name than source_metrics.parquet.
+    pd.DataFrame({"category": ["AI & ML"], "count": [99]}).to_parquet(gold / "a_category.parquet")
+    pd.DataFrame({"title": ["t"], "link": ["l"], "source": ["HN"], "category": ["c"],
+                  "score": [1], "category_rank": [1]}).to_parquet(gold / "b_top.parquet")
+    pd.DataFrame({"source": ["Hacker News", "Reddit"],
+                  "total_articles": [30, 20]}).to_parquet(gold / "source_metrics.parquet")
+
+    monkeypatch.chdir(tmp_path)
+    web._stats_cache["data"] = None
+    web._stats_cache["ts"] = 0
+    stats = web._get_gold_stats()
+    assert stats is not None, "Gold stats must not be swallowed"
+    assert stats["by_source"] == {"Hacker News": 30, "Reddit": 20}
+    assert stats["total"] == 50
+    # The 60s cache must wrap the Gold lookup, not sit below it.
+    web.get_cached_stats()
+    first = web._stats_cache["data"]
+    (tmp_path / "data" / "gold" / today / "source_metrics.parquet").unlink()
+    assert web.get_cached_stats() == first
+
+
+def test_ingest_survives_a_corrupt_line(tmp_path, monkeypatch):
+    """One unparseable line used to discard the whole partition's hash set,
+    so every record was re-appended. And a crash mid-append left a line with
+    no trailing newline, which the next append concatenated onto."""
+    from pipeline import ingest
+    monkeypatch.setattr(ingest, "BRONZE_ROOT", tmp_path / "bronze")
+
+    recs = [{"title": f"T{i}", "link": f"https://e.com/{i}", "source": "HN"} for i in range(3)]
+    ingest.write_bronze(recs, source="HN", day="2026-01-01")
+    part = tmp_path / "bronze" / "2026-01-01" / "HN.jsonl"
+    lines = part.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    part.write_text(
+        lines[0] + "\n" + '{"record_hash": "truncated", "tit' + "\n" + lines[2] + "\n",
+        encoding="utf-8")
+
+    # The third record must still be recognised as already ingested. The corrupt
+    # line is kept (only its hash is skipped) so it does not lose data.
+    ingest.write_bronze(recs, source="HN", day="2026-01-01")
+    raw = part.read_text(encoding="utf-8").splitlines()
+    valid = []
+    for line in raw:
+        if not line.strip():
+            continue
+        try:
+            valid.append(json.loads(line))
+        except ValueError:
+            continue
+    assert len(raw) == 4, f"a valid record was re-appended: {raw}"
+    assert len(valid) == 3, f"partition re-appended after a corrupt line: {len(valid)}"
+    assert {v["link"] for v in valid} == {r["link"] for r in recs}
+
+    # Truncated final line: the next append must not concatenate onto it.
+    part.write_text('{"record_hash": "aaa", "ti', encoding="utf-8")
+    ingest.write_bronze([{"title": "New", "link": "https://e.com/new", "source": "HN"}],
+                        source="HN", day="2026-01-01")
+    tail = part.read_text(encoding="utf-8")
+    assert '"record_hash": "aaa", "ti\n' in tail
+    assert '"https://e.com/new"' in tail
+    good = []
+    for line in tail.splitlines():
+        if not line.strip():
+            continue
+        try:
+            good.append(json.loads(line))
+        except ValueError:
+            continue
+    assert {"https://e.com/new"}.issubset({g.get("link") for g in good})
+
+
+def test_silver_repeat_writes_are_idempotent(temp_lake_dir):
+    """overwrite_or_ignore does not overwrite; pyarrow writes a new file per
+    call, so a re-run tripled every partition's rows."""
+    from pipeline.ingest import write_bronze
+    from pipeline.transform import read_bronze_records
+    from processing.spark_job import run_gold_duckdb
+
+    day = "2026-01-02"
+    recs = [{"title": f"S{i}", "link": f"https://e.com/{i}", "source": "HN",
+             "score": i, "category": "AI & ML", "excerpt": "body"} for i in range(3)]
+    write_bronze(recs, day=day)
+    for _ in range(3):
+        to_silver(read_bronze_records(day=day), day=day)
+    import duckdb
+    n = duckdb.query(
+        f"SELECT count(*) FROM read_parquet('{temp_lake_dir / 'silver'}/**/*.parquet', hive_partitioning=1)"
+    ).fetchone()[0]
+    assert n == 3, f"expected 3 rows after 3 identical runs, got {n}"
+    out = run_gold_duckdb(day=day)
+    assert json.loads((out / "daily_stats.json").read_text(encoding="utf-8"))["total_articles"] == 3
+
+
+def test_gold_refuses_to_fall_back_to_bronze(temp_lake_dir):
+    """The Bronze fallback defaulted every row to category="general" and logged
+    success, producing a valid-looking but wrong category mart."""
+    from pipeline.ingest import write_bronze
+    from processing.spark_job import run_gold
+
+    day = "2026-01-03"
+    write_bronze([{"title": "Raw bronze", "link": "https://e.com/b", "source": "HN"}], day=day)
+    with pytest.raises(ValueError):
+        run_gold(day=day)
+
+
+def test_enrich_never_repeats_the_dek_as_a_bullet():
+    """A 4+ char token floor made Jaccard 0.0 on sparse sentences, so bullet
+    #1 was the dek for most Reddit posts and arXiv abstracts."""
+    from pipeline.enrich import enrich_article
+    out = enrich_article({
+        "title": "Council approves the budget",
+        "link": "https://e.com/c",
+        "excerpt": "The council met on Monday. They approved a new budget for the coming year.",
+    })
+    assert out["dek"] not in out["bullets"]
+    assert out["bullets"] and len(out["bullets"]) <= 3
+
+
+def test_canonical_link_keeps_meaningful_params():
+    from pipeline.ingest import canonical_link as cl
+    # A real .com TLD must survive www-stripping.
+    assert cl("https://www.com/x") == "https://www.com/x"
+    assert cl("https://www.example.com/x") == "https://example.com/x"
+    # Param order must not create two records for one article.
+    assert cl("https://e.com/x?b=2&a=1") == cl("https://e.com/x?a=1&b=2")
+    # Valueless params used to be dropped entirely.
+    assert "page" in cl("https://e.com/x?a=1&page")
+    # A real id must NOT be stripped.
+    assert "id=123" in cl("https://e.com/x?id=123")
+    assert "utm_" not in cl("https://e.com/x?utm_source=rss&id=1")
+
+
+def test_validate_batch_survives_non_dict_records():
+    """canonical_link(str(record.get(...))) crashed the whole batch on any
+    non-dict, even though validate_article_record handles that case."""
+    valid, quarantined, metrics = validate_batch([
+        {"title": "A real headline", "link": "https://e.com/1", "source": "HN", "score": 1},
+        "a bare string",
+        ["a", "list"],
+    ], day="2026-01-04")
+    assert len(valid) == 1
+    assert len(quarantined) == 2
+    assert metrics["status"] in ("PASS", "WARNING")
+
+
+def test_health_helpers():
+    from src.app import is_safe_url, payload_str, sanitize_keyword
+    # urlparse().port raises on these; is_safe_url must return False, not raise.
+    assert is_safe_url("http://example.com:99999/") is False
+    assert is_safe_url("http://example.com:abc/") is False
+    assert is_safe_url("http://example.com:0/") is False
+    assert is_safe_url("https://example.com/x") is True
+    # A rejected keyword must be None so the caller can 400; '' would drop the
+    # WHERE clause and serve the entire unfiltered feed.
+    assert sanitize_keyword("ok query") == "ok query"
+    assert sanitize_keyword("50% off") is None
+    assert sanitize_keyword("") == ""
+    # A non-string field is treated as absent, never coerced.
+    assert payload_str({"url": 123}, "url") == ""
+    assert payload_str({"url": None}, "url") == ""
+    assert payload_str({}, "url") == ""
+    assert payload_str({"url": "  https://e.com  "}, "url") == "https://e.com"
+
+
+def test_email_digest_requires_opt_in():
+    from src.app import app
+    app.config["TESTING"] = True
+    with app.test_client() as c:
+        r = c.post("/api/email/digest", json={"email": "someone@example.com"})
+    assert r.status_code == 403
+    app.config["TESTING"] = False
+
+
+def test_rate_limit_response_sends_retry_after():
+    """flask-limiter 3.8 never populates e.retry_after, so the 429 body was
+    {"retry_after": null} with no Retry-After header at all."""
+    from src.app import app
+    app.config["TESTING"] = True
+    with app.test_client() as c:
+        last = None
+        for _ in range(15):
+            last = c.post("/subscribe", json={"email": "a@b.com"})
+            if last.status_code == 429:
+                break
+    assert last is not None and last.status_code == 429, "limit was never reached"
+    assert last.headers.get("Retry-After"), "429 must carry a Retry-After header"
+    assert last.get_json()["retry_after"]
+    app.config["TESTING"] = False
+
+
 def test_require_postgres_flag_fails_fast(tmp_path, monkeypatch):
     import time as _time
     monkeypatch.setattr(_time, "sleep", lambda s: None)
@@ -278,11 +544,28 @@ def test_zero_scrape_fails_loud(monkeypatch):
         def get_articles(self):
             return []
 
+    class _Db:
+        pruned = []
+
+        def prune_old_articles(self, max_age_days):
+            self.pruned.append(max_age_days)
+            return 7
+
+        def add_articles(self, *a, **k):
+            raise AssertionError("must not insert when there are no articles")
+
+        def get_unprocessed_articles(self, *a, **k):
+            raise AssertionError("must not process metadata on a zero run")
+
+    db = _Db()
     monkeypatch.setattr(mod, "NewsAggregator", _EmptyAgg)
-    monkeypatch.setattr(mod, "Database", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "Database", lambda *a, **k: db)
     monkeypatch.setattr(mod, "ensure_nltk_data", lambda: None)
     monkeypatch.setattr(mod, "SentimentIntensityAnalyzer", lambda *a, **k: None)
     monkeypatch.setenv("DATABASE_URL", "postgresql://dummy/dummy")
     with pytest.raises(SystemExit) as e:
         mod.main()
     assert e.value.code == 1
+    # Retention must still run on a zero-article run: it is the only thing
+    # that deletes rows, so exiting before it grew the table without bound.
+    assert db.pruned == [2]
