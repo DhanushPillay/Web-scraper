@@ -4,29 +4,25 @@ SQLite with FTS5 full-text search, sentiment/category columns,
 pagination, reading list, and export features.
 Supports both SQLite (local) and PostgreSQL (production).
 """
+import json
+import logging
 import os
 import re
 import sqlite3
 import time
-import json
-import logging
 from contextlib import contextmanager
-from typing import List, Dict, Any, Optional, Tuple
-from urllib.parse import urlparse
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class Database:
+    # Must be >= the per-worker gunicorn thread count (render.yaml: --threads 4).
+    PG_POOL_MIN = int(os.getenv("SNIFFER_PG_POOL_MIN", "4"))
+    PG_POOL_MAX = int(os.getenv("SNIFFER_PG_POOL_MAX", "10"))
+
     def __init__(self, db_name: str = "sniffer.db") -> None:
-        # PostgreSQL is configured through DATABASE_URL.  A few callers used to
-        # pass that URL as ``db_name``; keep the SQLite fallback a real local
-        # filename instead of trying to open a URL as a filesystem path.
-        self.db_name = (
-            "sniffer.db"
-            if str(db_name).startswith(("postgres://", "postgresql://"))
-            else db_name
-        )
+        self.db_name = db_name
         self._use_postgres = bool(os.getenv("DATABASE_URL"))
         self._pg_pool = None
         self._pool_pid = None
@@ -50,19 +46,20 @@ class Database:
                         if self._pg_pool:
                             try:
                                 self._pg_pool.closeall()
-                            except Exception:
-                                pass
+                            except Exception as close_err:
+                                # Already tearing down a dead pool; nothing left to salvage
+                                logger.debug(f"closeall() during retry failed: {close_err}")
                         self._pg_pool = None
                     else:
                         if self._pg_pool:
                             try:
                                 self._pg_pool.closeall()
-                            except Exception:
-                                pass
+                            except Exception as close_err:
+                                logger.debug(f"closeall() on failed pool failed: {close_err}")
                         self._pg_pool = None
                         if os.getenv("SNIFFER_REQUIRE_POSTGRES") == "1":
                             raise RuntimeError(
-                                f"SNIFFER_REQUIRE_POSTGRES=1 but PostgreSQL unreachable: {e}")
+                                f"SNIFFER_REQUIRE_POSTGRES=1 but PostgreSQL unreachable: {e}") from e
                         logger.error(f"PostgreSQL connection failed after 3 attempts: {e}. Falling back to SQLite WAL mode.")
                         self._use_postgres = False
 
@@ -85,7 +82,6 @@ class Database:
     def _init_pg_pool(self) -> None:
         """Initializes the PostgreSQL connection pool."""
         if self._pg_pool is None:
-            import psycopg2
             from psycopg2.extras import RealDictCursor
             from psycopg2.pool import ThreadedConnectionPool
             dsn = self._normalize_dsn(os.getenv("DATABASE_URL", "").strip())
@@ -93,8 +89,13 @@ class Database:
             # convert rows with dict(row).  PostgreSQL cursors return tuples by
             # default, unlike SQLite's Row objects, so use dictionary cursors
             # consistently for both backends.
+            # minconn must cover this worker's thread count.  psycopg2's
+            # _putconn only recycles a connection back into the pool while
+            # len(pool) < minconn, so minconn=1 made ~90% of returns at
+            # --threads 4 close instead — a fresh TCP+TLS handshake to Neon on
+            # nearly every request, defeating the keepalives below.
             self._pg_pool = ThreadedConnectionPool(
-                1, 10, dsn, cursor_factory=RealDictCursor,
+                self.PG_POOL_MIN, self.PG_POOL_MAX, dsn, cursor_factory=RealDictCursor,
                 keepalives=1, keepalives_idle=30,
                 keepalives_interval=10, keepalives_count=5,
             )
@@ -105,21 +106,31 @@ class Database:
         if self._pg_pool is not None:
             try:
                 self._pg_pool.closeall()
-            except Exception:
-                pass
+            except Exception as close_err:
+                # The pool is already being discarded; a failure here changes nothing
+                logger.debug(f"closeall() in _reset_pg_pool failed: {close_err}")
         self._pg_pool = None
         self._pool_pid = None
 
     def _is_pg_conn_error(self, e: Exception) -> bool:
-        """True for stale/broken connection errors (safe to discard the pool)."""
-        msg = f"{type(e).__name__}: {e}".lower()
-        markers = ("ssl", "connection", "server closed", "broken pipe",
-                   "terminating connection", "could not connect", "timeout")
-        return any(m in msg for m in markers)
+        """True for stale/broken connection errors (safe to discard the pool).
+
+        Keyed on the exception class, not substrings: a QueryCanceled carrying
+        the word "timeout" is a statement-level error, and discarding the pool
+        for it drops warm connections for every in-flight thread, while
+        InterfaceError ("cursor already closed") matches no substring and
+        returns a dead connection to the pool.
+        """
+        try:
+            import psycopg2
+        except ImportError:
+            return False
+        return isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError))
 
     @contextmanager
     def get_connection(self):
         """Context manager that auto-closes the DB connection with automatic fallback."""
+        was_postgres = self._use_postgres
         if self._use_postgres:
             # Gunicorn forks workers after import: a pool inherited across
             # processes shares sockets and breaks SSL. Reset on PID change.
@@ -132,10 +143,23 @@ class Database:
             except Exception as e:
                 if os.getenv("SNIFFER_REQUIRE_POSTGRES") == "1":
                     raise RuntimeError(
-                        f"SNIFFER_REQUIRE_POSTGRES=1 but PostgreSQL unreachable: {e}")
-                logger.error(f"PostgreSQL connection error: {e}. Falling back to SQLite.")
+                        f"SNIFFER_REQUIRE_POSTGRES=1 but PostgreSQL unreachable: {e}") from e
+                # Per-request fallback only.  Persisting _use_postgres = False
+                # pinned this worker to a local SQLite file for the life of the
+                # process after a single transient failure, while its sibling
+                # gunicorn worker kept using Postgres.  The downgrade is local
+                # so placeholder generation still matches the connection the
+                # caller actually receives.
+                logger.error(
+                    f"PostgreSQL connection error: {e}. Using SQLite for this request.")
+                self._reset_pg_pool()
                 self._use_postgres = False
-                self._pg_pool = None
+                try:
+                    with self._sqlite_connection() as sqlite_conn:
+                        yield sqlite_conn
+                finally:
+                    self._use_postgres = was_postgres
+                return
             else:
                 # Only connection-acquisition failures should fall back to
                 # SQLite.  SQL errors need to surface to the caller; treating
@@ -147,8 +171,9 @@ class Database:
                 except Exception as e:
                     try:
                         conn.rollback()
-                    except Exception:
-                        pass
+                    except Exception as rollback_err:
+                        # A failed rollback means the connection is already dead
+                        logger.debug(f"rollback() on failed connection raised: {rollback_err}")
                     # Stale/killed connections (e.g. gunicorn SIGKILL + Neon
                     # pooler) must not go back into the pool — discard the
                     # whole pool so the next request reconnects fresh.
@@ -156,8 +181,8 @@ class Database:
                         logger.error(f"PostgreSQL connection lost mid-query: {e}. Resetting pool.")
                         try:
                             conn.close()
-                        except Exception:
-                            pass
+                        except Exception as close_err:
+                            logger.debug(f"close() on dead connection raised: {close_err}")
                         self._reset_pg_pool()
                     raise
                 finally:
@@ -168,7 +193,12 @@ class Database:
                             self._reset_pg_pool()
                 return
 
-        # SQLite fallback
+        with self._sqlite_connection() as conn:
+            yield conn
+
+    @contextmanager
+    def _sqlite_connection(self):
+        """SQLite connection with the pragmas the read/write paths assume."""
         conn = sqlite3.connect(self.db_name, timeout=15)
         conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA journal_mode=WAL")
@@ -179,12 +209,13 @@ class Database:
         finally:
             conn.close()
 
-    def _row_to_dict(self, cursor, row) -> Dict[str, Any]:
+    def _row_to_dict(self, cursor, row) -> dict[str, Any]:
         """Safely converts a database row to a dictionary."""
-        if hasattr(row, 'keys') and callable(getattr(row, 'keys')):
+        if hasattr(row, 'keys'):
             try:
                 return dict(row)
             except (TypeError, ValueError):
+                # RealDictRow refused: fall through to the positional path below
                 pass
         cols = [col[0] for col in cursor.description]
         return dict(zip(cols, row))
@@ -223,14 +254,16 @@ class Database:
                         time_posted TEXT,
                         comments TEXT,
                         source TEXT,
-                        created_at REAL,
+                        -- DOUBLE PRECISION, not REAL: PG's REAL is float4, whose
+                        -- 24-bit mantissa quantises epoch ~1.79e9 to 128s steps.
+                        created_at DOUBLE PRECISION,
                         is_saved INTEGER DEFAULT 0,
                         is_read INTEGER DEFAULT 0,
                         sentiment TEXT DEFAULT 'neutral',
                         sentiment_score REAL DEFAULT 0.0,
                         category TEXT DEFAULT 'general',
                         read_time INTEGER DEFAULT 0,
-                        metadata_processed_at REAL,
+                        metadata_processed_at DOUBLE PRECISION,
                         excerpt TEXT DEFAULT '',
                         image_url TEXT DEFAULT '',
                         dek TEXT DEFAULT '',
@@ -249,8 +282,13 @@ class Database:
                 for idx in indexes:
                     cursor.execute(idx)
 
-                # FTS not directly supported in PG same way, use tsvector/tsquery or pg_trgm
-                # For now, we'll rely on ILIKE with indexes
+                # PG has no FTS5. search_articles falls back to ILIKE, but a
+                # leading-wildcard LIKE cannot use a btree index and the
+                # four-column OR chain is a guaranteed sequential scan. The
+                # real fix is pg_trgm GIN indexes:
+                #   CREATE EXTENSION pg_trgm;
+                #   CREATE INDEX ... ON articles USING gin (title gin_trgm_ops);
+                # Not applied automatically: CREATE EXTENSION needs superuser.
             else:
                 # SQLite schema
                 cursor.execute('''
@@ -330,6 +368,20 @@ class Database:
                     END
                 ''')
 
+                # CREATE ... IF NOT EXISTS never rescans existing rows, so an
+                # install that predates the triggers (or any row written while a
+                # trigger was missing) sits in `articles` but is invisible to
+                # search_articles forever. Rebuild when the index is short.
+                cursor.execute("SELECT COUNT(*) FROM articles")
+                article_count = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM articles_fts")
+                fts_count = cursor.fetchone()[0]
+                if article_count and fts_count < article_count:
+                    logger.info(
+                        f"FTS index behind ({fts_count}/{article_count}); rebuilding.")
+                    cursor.execute(
+                        "INSERT INTO articles_fts(articles_fts) SELECT 'rebuild'")
+
                 # SQLite indexes (composite covers single-col lookups)
                 indexes = [
                     "CREATE INDEX IF NOT EXISTS idx_articles_sentiment ON articles(sentiment)",
@@ -344,49 +396,57 @@ class Database:
 
             conn.commit()
 
-    # ──────────────────────────────────────────────
-    # Helpers for cross-DB compatibility
-    # ──────────────────────────────────────────────
-
     def _ph(self, n: int) -> str:
         """Return n parameter placeholders for current DB."""
         return ','.join(['%s'] * n) if self._use_postgres else ','.join(['?'] * n)
 
-    def _ph_one(self) -> str:
-        """Return single parameter placeholder for current DB."""
-        return '%s' if self._use_postgres else '?'
-
     def _cast_int(self, col: str) -> str:
         return f"CAST({col} AS INTEGER)"
 
-    def _glob(self, col: str, pattern: str) -> str:
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        """Escape LIKE/ILIKE metacharacters so a user query is a literal.
+
+        Without this, a search for `_` matches every row (and get_total_count
+        agrees, so the pager also reports the wrong page count).
+        """
+        return value.replace('\\', '\\\\').replace('%', r'\%').replace('_', r'\_')
+
+    def _like_clause(self, col: str, ph: str) -> str:
+        op = 'ILIKE' if self._use_postgres else 'LIKE'
+        return f" AND {col} {op} {ph} ESCAPE '\\'"
+
+    def _comments_is_numeric(self) -> str:
+        """Full-string numeric match for `comments`, identical on both backends."""
         if self._use_postgres:
-            return f"{col} ~ '{pattern}'"
-        return f"{col} GLOB '{pattern}'"
+            return "comments ~ '^[0-9]{1,18}$'"
+        return "comments NOT GLOB '*[^0-9]*' AND comments GLOB '[0-9]*'"
 
-    # ──────────────────────────────────────────────
-    # CRUD Operations
-    # ──────────────────────────────────────────────
-
-    def add_article(self, article: Dict[str, Any]) -> None:
-        """Adds a single article to the database."""
-        self.add_articles([article])
-
-    def add_articles(self, articles: List[Dict[str, Any]]) -> Tuple[int, int]:
+    def add_articles(self, articles: list[dict[str, Any]]) -> tuple[int, int]:
         """Batch insert articles in a single transaction for performance.
 
         Returns (inserted, skipped): rows actually new vs. duplicate links.
         """
         if not articles:
             return (0, 0)
+        # A row without a link can never satisfy `link TEXT UNIQUE NOT NULL`, and
+        # its presence aborts the entire executemany. A row without a title only
+        # passes NOT NULL as an empty string, which renders as a blank card.
+        # Drop both explicitly and account for them as skipped, not inserted.
+        unusable = [a for a in articles if not a.get('link') or not str(a.get('title') or '').strip()]
+        if unusable:
+            logger.warning(
+                f"Skipping {len(unusable)} article(s) with no link or title: "
+                f"{[(a.get('title'), a.get('link')) for a in unusable][:5]}"
+            )
+        articles = [a for a in articles if a.get('link') and str(a.get('title') or '').strip()]
+        if not articles:
+            return (0, 0)
         with self.get_connection() as conn:
             cursor = conn.cursor()
             try:
-                ph = self._ph_one()
-                # Honest counts: ON CONFLICT DO NOTHING hides duplicates, and
-                # rowcount after executemany is driver-dependent, so find the
-                # genuinely new links first (chunked: SQLite caps variables).
-                links = [a.get('link') for a in articles if a.get('link')]
+                ph = self._ph(1)
+                links = [a.get('link') for a in articles]
                 existing = set()
                 for i in range(0, len(links), 500):
                     chunk = links[i:i + 500]
@@ -396,9 +456,7 @@ class Database:
                     )
                     for r in cursor.fetchall():
                         existing.add(r['link'] if isinstance(r, dict) else r[0])
-                fresh = [a for a in articles
-                         if a.get('link') is None or a.get('link') not in existing]
-                skipped = len(articles) - len(fresh)
+                fresh = [a for a in articles if a['link'] not in existing]
                 if fresh:
                     cursor.executemany(f'''
                         INSERT INTO articles
@@ -410,34 +468,43 @@ class Database:
                         ON CONFLICT (link) DO NOTHING
                     ''', [
                         (
-                            a.get('title'), a.get('link'), a.get('score', 0),
+                            (a.get('title') or 'Untitled'), a['link'], a.get('score', 0),
                             a.get('author', 'Unknown'), a.get('time', 'Unknown'),
                             a.get('comments', '0'), a.get('source', 'Unknown'),
                             time.time(),
                             (a.get('category') or 'General'),
-                            a.get('excerpt', ''),
-                            a.get('image_url', ''),
-                            a.get('dek', ''),
-                            json.dumps(a.get('bullets', []) or [], ensure_ascii=False),
+                            (a.get('excerpt') or ''),
+                            (a.get('image_url') or ''),
+                            (a.get('dek') or ''),
+                            json.dumps(a.get('bullets') or [], ensure_ascii=False),
                         )
                         for a in fresh
                     ])
+                # rowcount is the only honest count: the pre-check SELECT above
+                # cannot see another session's uncommitted rows, so under READ
+                # COMMITTED a concurrent insert makes ON CONFLICT skip a row the
+                # pre-check still counted as fresh.  psycopg2 and py3.12 sqlite3
+                # both sum rowcount correctly across executemany.
+                inserted = max(cursor.rowcount, 0)
                 conn.commit()
-                logger.info(f"Batch insert: {len(fresh)} new, {skipped} duplicates skipped.")
-                return (len(fresh), skipped)
-            except Exception as e:
-                logger.error(f"DB error during batch insert: {e}")
-                return (0, len(articles))
+                skipped = len(articles) - inserted + len(unusable)
+                logger.info(f"Batch insert: {inserted} new, {skipped} skipped.")
+                return (inserted, skipped)
+            except Exception:
+                # A failed insert must never masquerade as "all duplicates".
+                logger.exception("DB error during batch insert")
+                raise
 
-    def upsert_images(self, articles: List[Dict[str, Any]]) -> None:
+    def upsert_images(self, articles: list[dict[str, Any]]) -> None:
         """Update image_url for articles that have it but the DB row doesn't."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            ph = self._ph_one()
+            ph = self._ph(1)
             updates = [(a['image_url'], a['link']) for a in articles if a.get('image_url')]
             if updates:
                 cursor.executemany(
-                    f"UPDATE articles SET image_url = {ph} WHERE link = {ph} AND image_url = ''",
+                    f"UPDATE articles SET image_url = {ph} "
+                    f"WHERE link = {ph} AND COALESCE(image_url, '') = ''",
                     updates
                 )
                 conn.commit()
@@ -448,32 +515,45 @@ class Database:
         cutoff = time.time() - (max_age_days * 24 * 60 * 60)
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            ph = self._ph_one()
+            ph = self._ph(1)
             cursor.execute(
                 f"DELETE FROM articles WHERE created_at < {ph} AND is_saved = 0",
                 (cutoff,),
             )
-            removed = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+            removed = max(cursor.rowcount or 0, 0)
             conn.commit()
             if removed:
                 logger.info(f"Pruned {removed} articles older than {max_age_days}d.")
             return removed
 
-    # ──────────────────────────────────────────────
-    # Query Operations (with pagination)
-    # ──────────────────────────────────────────────
+    def _normalize_rows(self, cursor, rows) -> list[dict[str, Any]]:
+        """Unifies backend row shapes into the dict shape templates expect."""
+        results = []
+        for row in rows:
+            d = self._row_to_dict(cursor, row)
+            d['time'] = d['time_posted']
+            try:
+                b = d.get('bullets')
+                if isinstance(b, str):
+                    d['bullets'] = json.loads(b) if b else []
+                elif b is None:
+                    d['bullets'] = []
+            except (TypeError, ValueError):
+                d['bullets'] = []
+            results.append(d)
+        return results
 
     def get_articles(self, limit: int = 30, offset: int = 0, source_filter: str = 'all',
                      keyword: str = '', saved_only: bool = False,
                      category: str = '',
-                     sort_by: str = 'newest') -> List[Dict[str, Any]]:
+                     sort_by: str = 'newest') -> list[dict[str, Any]]:
         """Retrieves articles with optional filtering and pagination."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            ph = self._ph_one()
+            ph = self._ph(1)
 
             query = "SELECT * FROM articles WHERE 1=1"
-            params: List[Any] = []
+            params: list[Any] = []
 
             if saved_only:
                 query += " AND is_saved = 1"
@@ -483,8 +563,8 @@ class Database:
                 params.append(source_filter)
 
             if keyword:
-                query += f" AND title ILIKE {ph}" if self._use_postgres else f" AND title LIKE {ph}"
-                params.append(f"%{keyword}%")
+                query += self._like_clause('title', ph)
+                params.append(f"%{self._escape_like(keyword)}%")
 
             if category and category != 'all':
                 query += f" AND category = {ph}"
@@ -495,45 +575,28 @@ class Database:
             if sort_key == 'score':
                 order_by = f"{self._cast_int('score')} DESC, created_at DESC"
             elif sort_key == 'comments':
-                if self._use_postgres:
-                    order_by = f"CASE WHEN {self._glob('comments', r'^\d+$')} THEN {self._cast_int('comments')} ELSE 0 END DESC, created_at DESC"
-                else:
-                    order_by = (
-                        f"CASE WHEN {self._glob('comments', '[0-9]*')} THEN {self._cast_int('comments')} "
-                        f"ELSE 0 END DESC, created_at DESC"
-                    )
+                # Both backends must agree: PG '^\d+$' is a full match, while
+                # SQLite GLOB '[0-9]*' only means "digit then anything", so
+                # '1,234' used to cast to 1 on SQLite and 0 on PG.
+                order_by = (
+                    f"CASE WHEN {self._comments_is_numeric()} "
+                    f"THEN {self._cast_int('comments')} ELSE 0 END DESC, created_at DESC"
+                )
 
             query += f" ORDER BY {order_by} LIMIT {ph} OFFSET {ph}"
-            params.extend([limit, offset])
+            params.extend([limit, max(0, offset)])
 
             cursor.execute(query, params)
-            rows = cursor.fetchall()
-
-            results = []
-            for row in rows:
-                d = self._row_to_dict(cursor, row)
-                d['time'] = d['time_posted']
-                # parse bullets JSON
-                try:
-                    b = d.get('bullets')
-                    if isinstance(b, str):
-                        d['bullets'] = json.loads(b) if b else []
-                    elif b is None:
-                        d['bullets'] = []
-                except Exception:
-                    d['bullets'] = []
-                results.append(d)
-
-            return results
+            return self._normalize_rows(cursor, cursor.fetchall())
 
     def get_total_count(self, source_filter: str = 'all', keyword: str = '',
                         saved_only: bool = False, category: str = '') -> int:
         """Returns total article count for pagination calculation."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            ph = self._ph_one()
+            ph = self._ph(1)
             query = "SELECT COUNT(*) FROM articles WHERE 1=1"
-            params: List[Any] = []
+            params: list[Any] = []
 
             if saved_only:
                 query += " AND is_saved = 1"
@@ -541,8 +604,8 @@ class Database:
                 query += f" AND source = {ph}"
                 params.append(source_filter)
             if keyword:
-                query += f" AND title ILIKE {ph}" if self._use_postgres else f" AND title LIKE {ph}"
-                params.append(f"%{keyword}%")
+                query += self._like_clause('title', ph)
+                params.append(f"%{self._escape_like(keyword)}%")
             if category and category != 'all':
                 query += f" AND category = {ph}"
                 params.append(category)
@@ -550,14 +613,10 @@ class Database:
             cursor.execute(query, params)
             return self._fetch_scalar(cursor)
 
-    # ──────────────────────────────────────────────
-    # Full-Text Search
-    # ──────────────────────────────────────────────
-
     def _sanitize_fts_query(self, query: str) -> str:
         """Escape FTS5 special syntax to prevent injection/errors."""
-        # Remove FTS5 operators and quote the query as phrase tokens
-        # ponytail: naive quoting is safer than full FTS parser; upgrade to fts5 tokeniser if needed
+        # Remove FTS5 operators and quote the query as phrase tokens.
+        # Naive stripping is deliberate: it cannot emit malformed FTS5 syntax.
         cleaned = re.sub(r'[\"\*\(\)\:\^\-]', ' ', query)
         cleaned = re.sub(r'\b(AND|OR|NOT|NEAR)\b', ' ', cleaned, flags=re.IGNORECASE)
         tokens = [t for t in re.findall(r'[a-zA-Z0-9]+', cleaned) if len(t) >= 2]
@@ -566,27 +625,31 @@ class Database:
         # Join as OR phrase for broader recall
         return ' OR '.join(f'"{t}"' for t in tokens[:10])
 
-    def search_articles(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+    def search_articles(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
         """Full-text search using FTS5 (SQLite) or ILIKE (PostgreSQL)."""
         if not query or not query.strip():
             return []
-        # ILIKE requires escaping % and _ wildcards
-        query_escaped = query.replace('%', r'\%').replace('_', r'\_')
+        # Resolve the fallback query BEFORE taking a connection: re-entering
+        # get_connection() while one is checked out makes psycopg2 hand out a
+        # second connection and then close+discard the outer one.
+        fts_query = self._sanitize_fts_query(query) if not self._use_postgres else ''
+        if not self._use_postgres and not fts_query:
+            return self.get_articles(limit=limit, keyword=query, sort_by='newest')
+        pattern = f"%{self._escape_like(query)}%"
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            ph = self._ph_one()
+            ph = self._ph(1)
             if self._use_postgres:
-                # PostgreSQL: use ILIKE across multiple columns
+                # `%foo%` with a leading wildcard cannot use a btree index, and
+                # the OR chain across four columns forces a sequential scan.
+                # pg_trgm GIN indexes are the fix; until then this is expected.
                 cursor.execute(f'''
                     SELECT * FROM articles
                     WHERE title ILIKE {ph} ESCAPE '\\' OR excerpt ILIKE {ph} ESCAPE '\\' OR author ILIKE {ph} ESCAPE '\\' OR source ILIKE {ph} ESCAPE '\\'
                     ORDER BY created_at DESC
                     LIMIT {ph}
-                ''', (f"%{query_escaped}%", f"%{query_escaped}%", f"%{query_escaped}%", f"%{query_escaped}%", limit))
+                ''', (pattern, pattern, pattern, pattern, limit))
             else:
-                fts_query = self._sanitize_fts_query(query)
-                if not fts_query:
-                    return self.get_articles(limit=limit, keyword=query, sort_by='newest')
                 try:
                     cursor.execute('''
                         SELECT a.* FROM articles a
@@ -597,73 +660,61 @@ class Database:
                     ''', (fts_query, limit))
                 except sqlite3.OperationalError as e:
                     logger.warning(f"FTS search error: {e}")
-                    return self.get_articles(limit=limit, keyword=query_escaped, sort_by='newest')
+                    return self.get_articles(limit=limit, keyword=query, sort_by='newest')
 
-            rows = cursor.fetchall()
-            results = []
-            for row in rows:
-                d = self._row_to_dict(cursor, row)
-                d['time'] = d['time_posted']
-                try:
-                    b = d.get('bullets')
-                    d['bullets'] = json.loads(b) if isinstance(b, str) and b else (b or [])
-                except Exception:
-                    d['bullets'] = []
-                results.append(d)
-            return results
+            return self._normalize_rows(cursor, cursor.fetchall())
 
-    # ──────────────────────────────────────────────
-    # Bookmarks & Reading List
-    # ──────────────────────────────────────────────
+    def _toggle_flag(self, article_id: int, column: str) -> bool | None:
+        """Flips a boolean-ish column atomically and returns the new state.
 
-    def toggle_bookmark(self, article_id: int) -> Optional[bool]:
+        A SELECT-then-UPDATE let two concurrent callers both read 0 and both
+        write 1, and `not None` treated a NULL column as "set".  A single
+        UPDATE...RETURNING fixes both (RETURNING needs PG, or SQLite >= 3.35).
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            ph = self._ph(1)
+            sql = (
+                f"UPDATE articles SET {column} = CASE WHEN {column} = 1 THEN 0 ELSE 1 END "
+                f"WHERE id = {ph} RETURNING {column}"
+            )
+            try:
+                cursor.execute(sql, (article_id,))
+                row = cursor.fetchone()
+            except Exception as e:
+                if 'RETURNING' not in str(e).upper():
+                    raise
+                # Backend without RETURNING: accept the (rare) lost-update race
+                # rather than failing the request outright.
+                logger.warning(f"RETURNING unsupported, using non-atomic toggle: {e}")
+                cursor.execute(
+                    f"UPDATE articles SET {column} = CASE WHEN {column} = 1 THEN 0 ELSE 1 END "
+                    f"WHERE id = {ph}", (article_id,))
+                cursor.execute(f"SELECT {column} FROM articles WHERE id = {ph}", (article_id,))
+                row = cursor.fetchone()
+            conn.commit()
+            if not row:
+                return None
+            value = row[column] if isinstance(row, dict) else row[0]
+            return bool(value)
+
+    def toggle_bookmark(self, article_id: int) -> bool | None:
         """Toggles the bookmark status of an article."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            ph = self._ph_one()
-            cursor.execute(f"SELECT is_saved FROM articles WHERE id = {ph}", (article_id,))
-            result = cursor.fetchone()
+        return self._toggle_flag(article_id, 'is_saved')
 
-            if not result:
-                return None
-
-            current_status = result['is_saved']
-            new_status = not current_status
-            cursor.execute(f"UPDATE articles SET is_saved = {ph} WHERE id = {ph}", (int(new_status), article_id))
-            conn.commit()
-
-            return bool(new_status)
-
-    def toggle_read(self, article_id: int) -> Optional[bool]:
+    def toggle_read(self, article_id: int) -> bool | None:
         """Toggles the read status of an article."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            ph = self._ph_one()
-            cursor.execute(f"SELECT is_read FROM articles WHERE id = {ph}", (article_id,))
-            result = cursor.fetchone()
+        return self._toggle_flag(article_id, 'is_read')
 
-            if not result:
-                return None
-
-            current_status = result['is_read']
-            new_status = not current_status
-            cursor.execute(f"UPDATE articles SET is_read = {ph} WHERE id = {ph}", (int(new_status), article_id))
-            conn.commit()
-
-            return bool(new_status)
-
-    # ──────────────────────────────────────────────
-    # Sentiment & Category Updates
-    # ──────────────────────────────────────────────
-
-    def update_article_metadata(self, article_id: int, sentiment: str = None,
-                                 sentiment_score: float = None, category: str = None,
-                                 read_time: int = None,
-                                 metadata_processed_at: float = None) -> None:
+    def update_article_metadata(self, article_id: int, sentiment: str | None = None,
+                                 sentiment_score: float | None = None,
+                                 category: str | None = None,
+                                 read_time: int | None = None,
+                                 metadata_processed_at: float | None = None) -> None:
         """Updates article metadata (sentiment, category, read_time)."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            ph = self._ph_one()
+            ph = self._ph(1)
             updates = []
             params = []
 
@@ -688,11 +739,11 @@ class Database:
                 cursor.execute(f"UPDATE articles SET {', '.join(updates)} WHERE id = {ph}", params)
                 conn.commit()
 
-    def get_unprocessed_articles(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_unprocessed_articles(self, limit: int = 50) -> list[dict[str, Any]]:
         """Gets articles that haven't been processed for sentiment/category yet."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            ph = self._ph_one()
+            ph = self._ph(1)
             cursor.execute(f'''
                 SELECT * FROM articles
                 WHERE metadata_processed_at IS NULL
@@ -701,17 +752,13 @@ class Database:
             rows = cursor.fetchall()
             return [self._row_to_dict(cursor, row) for row in rows]
 
-    # ──────────────────────────────────────────────
-    # Statistics & Analytics
-    # ──────────────────────────────────────────────
-
     def get_article_count(self) -> int:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM articles")
             return self._fetch_scalar(cursor)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Returns statistics about articles in the database."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -720,7 +767,7 @@ class Database:
             total = self._fetch_scalar(cursor)
 
             twenty_four_hours_ago = time.time() - (24 * 60 * 60)
-            ph = self._ph_one()
+            ph = self._ph(1)
             cursor.execute(f"SELECT COUNT(*) FROM articles WHERE created_at >= {ph}", (twenty_four_hours_ago,))
             today = self._fetch_scalar(cursor)
 
@@ -732,7 +779,9 @@ class Database:
 
             cursor.execute("SELECT source, COUNT(*) as count FROM articles GROUP BY source")
             by_source_rows = cursor.fetchall()
-            by_source = {row['source']: row['count'] for row in by_source_rows}
+            # A None key makes Flask's sort_keys=True raise TypeError, turning
+            # a single NULL source into a 500 on every page render.
+            by_source = {(row['source'] or 'Unknown'): row['count'] for row in by_source_rows}
 
             cursor.execute("SELECT category, COUNT(*) as count FROM articles GROUP BY category ORDER BY count DESC")
             by_category_rows = cursor.fetchall()
@@ -753,28 +802,36 @@ class Database:
                 'by_sentiment': by_sentiment
             }
 
-    def get_personalized_feed(self, limit: int = 30) -> List[Dict[str, Any]]:
+    def get_personalized_feed(self, limit: int = 30) -> list[dict[str, Any]]:
         """Returns articles boosted by user preferences (based on bookmarked sources/categories)."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            ph = self._ph_one()
+            ph = self._ph(1)
 
             # Find user's preferred sources and categories from bookmarks
-            cursor.execute(f'''
+            cursor.execute('''
                 SELECT source, COUNT(*) as cnt FROM articles
                 WHERE is_saved = 1 GROUP BY source ORDER BY cnt DESC LIMIT 3
             ''')
-            preferred_sources = [row['source'] for row in cursor.fetchall()]
+            # A NULL source can never satisfy `source IN (...)`, so it would
+            # silently consume one of the three preference slots.
+            preferred_sources = [r['source'] for r in cursor.fetchall() if r['source']]
 
-            cursor.execute(f'''
+            cursor.execute('''
                 SELECT category, COUNT(*) as cnt FROM articles
                 WHERE is_saved = 1 GROUP BY category ORDER BY cnt DESC LIMIT 3
             ''')
             preferred_categories = [row['category'] for row in cursor.fetchall()]
 
             if not preferred_sources and not preferred_categories:
-                # No preferences yet, return recent articles
-                return self.get_articles(limit=limit)
+                # Run the query on this connection rather than re-entering
+                # get_connection(), which would consume a second pool slot and
+                # get the outer connection closed underneath us.
+                cursor.execute(f"SELECT * FROM articles ORDER BY created_at DESC LIMIT {ph}", (limit,))
+                results = self._normalize_rows(cursor, cursor.fetchall())
+                for d in results:
+                    d['relevance_score'] = 0
+                return results
 
             # Build a scoring query that boosts preferred content (avoid IN () when list empty)
             if preferred_sources and preferred_categories:
@@ -810,23 +867,7 @@ class Database:
                 '''
                 params = preferred_categories + [limit]
             cursor.execute(query, params)
-            rows = cursor.fetchall()
-
-            results = []
-            for row in rows:
-                d = self._row_to_dict(cursor, row)
-                d['time'] = d['time_posted']
-                try:
-                    b = d.get('bullets')
-                    d['bullets'] = json.loads(b) if isinstance(b, str) and b else (b or [])
-                except Exception:
-                    d['bullets'] = []
-                results.append(d)
-            return results
-
-    # ──────────────────────────────────────────────
-    # Export
-    # ──────────────────────────────────────────────
+            return self._normalize_rows(cursor, cursor.fetchall())
 
     def export_bookmarks_json(self) -> str:
         """Exports bookmarked articles as JSON string."""
@@ -850,7 +891,7 @@ class Database:
         articles = self.get_articles(limit=1000, saved_only=True)
         lines = ["# Saved Articles\n"]
         # Group by source
-        by_source: Dict[str, list] = {}
+        by_source: dict[str, list] = {}
         for a in articles:
             src = a.get('source', 'Other')
             by_source.setdefault(src, []).append(a)
