@@ -6,29 +6,52 @@ SHA-256 fingerprinting and persistent watermark state for incremental loading.
 import hashlib
 import json
 import logging
+import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 BRONZE_ROOT = Path("data/bronze")
 WATERMARK_PATH = Path("data/watermark.json")
 
+# Only these are dropped from a link; every other param carries identity
+TRACKER_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "utm_id", "fbclid", "gclid", "mc_cid", "mc_eid",
+})
+DEFAULT_PORTS = {"http": "80", "https": "443"}
+
+LOCK_TIMEOUT_S = 0.5
+LOCK_MAX_ATTEMPTS = 20
+LOCK_STALE_S = 300
+
 
 def canonical_link(link: str) -> str:
-    """Canonical URL for dedup: lower host, strip www/trailing slash, drop trackers."""
-    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    """Canonical URL for dedup: IDNA host, no default port, sorted params, no trackers."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
     s = (link or "").strip()
     if not s:
         return ""
     try:
         p = urlsplit(s)
-        net = p.netloc.lower().removeprefix("www.")
+        scheme = p.scheme.lower()
+        host = (p.hostname or "").lower()
+        if host:
+            host = host.encode("idna").decode("ascii")
+        if host.startswith("www.") and host.count(".") > 1:
+            # A bare "www.com" is a real host, not a www prefix on a domain
+            host = host[len("www."):]
+        port = p.port
+        netloc = host if port is None or str(port) == DEFAULT_PORTS.get(scheme) else f"{host}:{port}"
         path = p.path.rstrip("/") or ""
-        q = [(k, v) for k, v in parse_qsl(p.query)
-             if not k.lower().startswith("utm_") and k.lower() not in ("ref", "fbclid", "gclid")]
-        return urlunsplit((p.scheme.lower(), net, path, urlencode(q), ""))
+        q = sorted(
+            (k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
+            if k.lower() not in TRACKER_PARAMS
+        )
+        return urlunsplit((scheme, netloc, path, urlencode(q), ""))
     except Exception:
         return s.lower()
 
@@ -39,44 +62,86 @@ def generate_record_hash(link: str, source: str = "") -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def load_watermark() -> Dict[str, Any]:
+def load_watermark() -> dict[str, Any]:
     """Loads incremental pipeline watermark state."""
     if WATERMARK_PATH.exists():
         try:
             return json.loads(WATERMARK_PATH.read_text(encoding="utf-8"))
         except Exception as e:
-            logger.warning(f"Failed to read watermark: {e}")
+            # A silent {} here would reset total_records_ingested on the next save
+            logger.error(f"Watermark {WATERMARK_PATH} is corrupt ({e}); moved aside, counters will restart")
+            try:
+                WATERMARK_PATH.replace(WATERMARK_PATH.with_suffix(f".corrupt.{int(time.time())}.json"))
+            except OSError as mv:
+                logger.error(f"Could not move corrupt watermark aside: {mv}")
             return {}
     return {}
 
 
-def save_watermark(state: Dict[str, Any]) -> None:
+def save_watermark(state: dict[str, Any]) -> None:
     """Persists incremental pipeline watermark state."""
     WATERMARK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    WATERMARK_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    tmp = WATERMARK_PATH.with_name(WATERMARK_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    os.replace(tmp, WATERMARK_PATH)
 
 
-def _get_existing_hashes_for_day(day: str, source: str) -> Set[str]:
+def _get_existing_hashes_for_day(day: str, source: str) -> set[str]:
     """Reads existing record hashes for a given day/source partition to enforce idempotency."""
     safe_source = "".join(c if c.isalnum() else "_" for c in source) or "mixed"
     partition_file = BRONZE_ROOT / day / f"{safe_source}.jsonl"
-    existing_hashes: Set[str] = set()
+    existing_hashes: set[str] = set()
 
     if partition_file.exists():
-        try:
-            for line in partition_file.read_text(encoding="utf-8").splitlines():
-                if line.strip():
+        # errors="replace": a mangled byte becomes an unparsable line, not a crash that
+        # would hide every hash and let the whole partition be re-appended
+        with partition_file.open("r", encoding="utf-8", errors="replace") as f:
+            for lineno, line in enumerate(f, start=1):
+                if not line.strip():
+                    continue
+                try:
                     item = json.loads(line)
+                except ValueError as e:
+                    # One bad line must not discard every hash read before it,
+                    # which would make the whole partition look empty and get re-appended
+                    logger.warning(f"Corrupt line {partition_file}:{lineno} ({e}); hash skipped, line kept")
+                    continue
+                if isinstance(item, dict):
                     h = item.get("record_hash")
                     if h:
                         existing_hashes.add(h)
-        except Exception as e:
-            logger.warning(f"Error reading existing partition {partition_file}: {e}")
 
     return existing_hashes
 
 
-def write_bronze(articles: List[Dict[str, Any]], source: str = "mixed", day: str = None) -> Path:
+def _acquire_partition_lock(lock_path: Path) -> bool:
+    """O_EXCL sentinel so a concurrent writer cannot interleave its read and append."""
+    for _ in range(LOCK_MAX_ATTEMPTS):
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                age = time.time() - lock_path.stat().st_mtime
+            except OSError:
+                age = 0.0
+            if age > LOCK_STALE_S:
+                # Holder died without releasing; reclaim or the partition is wedged forever
+                logger.warning(f"Reclaiming stale Bronze lock {lock_path} (age {age:.0f}s)")
+                try:
+                    lock_path.unlink()
+                except OSError as e:
+                    # Cannot reclaim, so stop retrying instead of spinning to the timeout
+                    logger.debug(f"Stale Bronze lock {lock_path} still held: {e}")
+                    return False
+                continue
+            time.sleep(LOCK_TIMEOUT_S)
+            continue
+        os.close(fd)
+        return True
+    return False
+
+
+def write_bronze(articles: list[dict[str, Any]], source: str = "mixed", day: str | None = None) -> Path:
     """
     Appends articles to Bronze JSONL partitioned by day/source.
     Enforces idempotency using deterministic record hashes.
@@ -89,51 +154,73 @@ def write_bronze(articles: List[Dict[str, Any]], source: str = "mixed", day: str
 
     safe_source = "".join(c if c.isalnum() else "_" for c in source) or "mixed"
     out_path = out_dir / f"{safe_source}.jsonl"
+    lock_path = out_dir / f".{safe_source}.lock"
 
-    existing_hashes = _get_existing_hashes_for_day(day, source)
-    new_records: List[Dict[str, Any]] = []
+    if not _acquire_partition_lock(lock_path):
+        logger.error(
+            f"Could not acquire lock {lock_path} after {LOCK_MAX_ATTEMPTS} attempts; "
+            f"{len(articles)} records for source={source} NOT written to {out_path}"
+        )
+        return out_path
 
-    ingest_time = datetime.now(timezone.utc).isoformat()
-    for art in articles:
-        link = str(art.get("link", ""))
-        rec_hash = generate_record_hash(link, source)
+    try:
+        # Re-read inside the lock: the previous holder may have appended since we last looked
+        existing_hashes = _get_existing_hashes_for_day(day, source)
+        new_records: list[dict[str, Any]] = []
 
-        if rec_hash in existing_hashes:
-            continue
+        ingest_time = datetime.now(timezone.utc).isoformat()
+        for art in articles:
+            link = str(art.get("link", ""))
+            rec_hash = generate_record_hash(link, source)
 
-        envelope = {
-            "record_hash": rec_hash,
-            "ingested_at": ingest_time,
-            "schema_version": "1.0",
-            **art,
-        }
-        new_records.append(envelope)
-        existing_hashes.add(rec_hash)
+            if rec_hash in existing_hashes:
+                continue
 
-    if new_records:
-        with out_path.open("a", encoding="utf-8") as f:
-            for rec in new_records:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        logger.info(f"[Bronze] Wrote {len(new_records)} new records to {out_path}")
-    else:
-        logger.info(f"[Bronze] All {len(articles)} records already present in {out_path} (idempotent skip)")
+            envelope = {
+                "record_hash": rec_hash,
+                "ingested_at": ingest_time,
+                "schema_version": "1.0",
+                **art,
+            }
+            new_records.append(envelope)
+            existing_hashes.add(rec_hash)
+
+        if new_records:
+            with out_path.open("a+b") as f:
+                f.seek(0, os.SEEK_END)
+                if f.tell() > 0:
+                    # A crash mid-append can leave no trailing newline, which would
+                    # glue the next record onto the half-written line
+                    f.seek(-1, os.SEEK_END)
+                    if f.read(1) != b"\n":
+                        f.write(b"\n")
+                for rec in new_records:
+                    f.write(json.dumps(rec, ensure_ascii=False).encode("utf-8") + b"\n")
+            logger.info(f"[Bronze] Wrote {len(new_records)} new records to {out_path}")
+        else:
+            logger.info(f"[Bronze] All {len(articles)} records already present in {out_path} (idempotent skip)")
+    finally:
+        try:
+            lock_path.unlink(missing_ok=True)
+        except OSError as e:
+            logger.error(f"Failed to release Bronze lock {lock_path}: {e}")
 
     return out_path
 
 
-def write_bronze_by_source(articles: List[Dict[str, Any]], day: str = None) -> Dict[str, Path]:
+def write_bronze_by_source(articles: list[dict[str, Any]], day: str | None = None) -> dict[str, Path]:
     """
     Partitions raw articles by source, writes to Bronze JSONL, and updates watermark state.
     """
     if day is None:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    by_source: Dict[str, List[Dict[str, Any]]] = {}
+    by_source: dict[str, list[dict[str, Any]]] = {}
     for a in articles:
         src = str(a.get("source", "unknown"))
         by_source.setdefault(src, []).append(a)
 
-    out_paths: Dict[str, Path] = {}
+    out_paths: dict[str, Path] = {}
     for src, arts in by_source.items():
         out_paths[src] = write_bronze(arts, source=src, day=day)
 
