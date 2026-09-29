@@ -5,9 +5,11 @@ a Quarantine layer, and calculates data quality observability metrics.
 """
 import json
 import logging
+import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
 from pipeline.ingest import canonical_link
@@ -25,7 +27,7 @@ MAX_TITLE_LENGTH = 500
 
 def is_valid_url(url: str) -> bool:
     """Validate that the string is a well-formed HTTP/HTTPS URL."""
-    if not url or not isinstance(url, str):
+    if not url:
         return False
     try:
         parsed = urlparse(url.strip())
@@ -34,12 +36,12 @@ def is_valid_url(url: str) -> bool:
         return False
 
 
-def validate_article_record(article: Dict[str, Any]) -> List[str]:
+def validate_article_record(article: dict[str, Any]) -> list[str]:
     """
     Validate a single raw article dictionary against declarative schema constraints.
     Returns a list of error descriptions (empty list if valid).
     """
-    errors: List[str] = []
+    errors: list[str] = []
 
     if not isinstance(article, dict):
         return ["record is not a dictionary"]
@@ -76,9 +78,9 @@ def validate_article_record(article: Dict[str, Any]) -> List[str]:
 
 
 def validate_batch(
-    articles: List[Dict[str, Any]],
-    day: str = None
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    articles: list[dict[str, Any]],
+    day: str | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """
     Validates a batch of articles, separates valid vs. quarantined records,
     deduplicates by canonical link, and computes observability quality metrics.
@@ -88,14 +90,16 @@ def validate_batch(
     if day is None:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    seen_links: Set[str] = set()
-    valid_records: List[Dict[str, Any]] = []
-    quarantined_records: List[Dict[str, Any]] = []
-    rule_failure_counts: Dict[str, int] = {}
+    seen_links: set[str] = set()
+    valid_records: list[dict[str, Any]] = []
+    quarantined_records: list[dict[str, Any]] = []
+    rule_failure_counts: dict[str, int] = {}
 
     for record in articles:
         errors = validate_article_record(record)
-        link = canonical_link(str(record.get("link", "")))
+        # A Bronze line can hold any JSON value, so .get() is not safe here
+        is_mapping = isinstance(record, dict)
+        link = canonical_link(str(record.get("link", ""))) if is_mapping else ""
 
         # Duplicate link detection within batch (canonical: www/trailing-slash/tracker-proof)
         if link and link in seen_links:
@@ -107,7 +111,7 @@ def validate_batch(
                 rule_failure_counts[rule_name] = rule_failure_counts.get(rule_name, 0) + 1
 
             quarantined_item = {
-                **record,
+                **(record if is_mapping else {"raw_record": record}),
                 "_quarantine_timestamp": datetime.now(timezone.utc).isoformat(),
                 "_validation_errors": errors,
             }
@@ -136,7 +140,7 @@ def validate_batch(
     return valid_records, quarantined_records, quality_summary
 
 
-def save_quarantine_records(quarantined_records: List[Dict[str, Any]], day: str = None) -> Path:
+def save_quarantine_records(quarantined_records: list[dict[str, Any]], day: str | None = None) -> Path:
     """Writes quarantined records with validation failure reasons to JSONL."""
     if day is None:
         day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -144,30 +148,41 @@ def save_quarantine_records(quarantined_records: List[Dict[str, Any]], day: str 
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "quarantined_records.jsonl"
 
-    with out_file.open("a", encoding="utf-8") as f:
+    # Snapshot of the day, not an append-only log: rewrite it so re-runs do not duplicate
+    tmp_file = out_file.with_name(out_file.name + ".tmp")
+    with tmp_file.open("w", encoding="utf-8") as f:
         for record in quarantined_records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    os.replace(tmp_file, out_file)
 
     logger.info(f"Saved {len(quarantined_records)} quarantined records to {out_file}")
     return out_file
 
 
-def save_quality_metrics(quality_summary: Dict[str, Any]) -> Path:
+def save_quality_metrics(quality_summary: dict[str, Any]) -> Path:
     """Appends quality summary statistics to data/logs/quality_metrics.json."""
     LOGS_ROOT.mkdir(parents=True, exist_ok=True)
     metrics_file = LOGS_ROOT / "quality_metrics.json"
 
-    history: List[Dict[str, Any]] = []
+    history: list[dict[str, Any]] = []
     if metrics_file.exists():
         try:
             history = json.loads(metrics_file.read_text(encoding="utf-8"))
             if not isinstance(history, list):
                 history = [history]
-        except Exception:
+        except Exception as e:
+            # The CI quality artifact is this file; a silent [] would erase the run trend
+            logger.error(f"Quality metrics file {metrics_file} is corrupt ({e}); moved aside, history restarted")
+            try:
+                metrics_file.replace(metrics_file.with_name(metrics_file.name + f".corrupt.{int(time.time())}"))
+            except OSError as mv:
+                logger.error(f"Could not move corrupt metrics file aside: {mv}")
             history = []
 
     history.append(quality_summary)
     # Keep last 30 runs
-    metrics_file.write_text(json.dumps(history[-30:], indent=2), encoding="utf-8")
+    tmp_file = metrics_file.with_name(metrics_file.name + ".tmp")
+    tmp_file.write_text(json.dumps(history[-30:], indent=2), encoding="utf-8")
+    os.replace(tmp_file, metrics_file)
     logger.info(f"Data quality metrics updated: {quality_summary['data_quality_pass_rate_percent']}% pass rate")
     return metrics_file
