@@ -9,6 +9,13 @@ on:
     - cron: "0 2 * * *" # Daily at 02:00 UTC (07:30 IST) — 100% Free on Public Repo
   workflow_dispatch:
 
+# Prevents a scheduled re-run from overlapping a manual dispatch on the same
+# day partition, which is what the Bronze append lock and the
+# Silver delete-then-write step are otherwise racing against.
+concurrency:
+  group: lakehouse-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     name: Run Automated Tests
@@ -48,23 +55,17 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Set up Java for PySpark
-        uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-
-      - name: Install dependencies & PySpark
+      - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install -r requirements-actions.txt
-          pip install pyspark==3.5.1 pyarrow duckdb pandas pyyaml
+          pip install pyarrow duckdb pandas
 
       - name: Download NLTK Tokenizers
         run: |
           python -c "import nltk; [nltk.download(r, quiet=True) for r in ['punkt', 'punkt_tab', 'vader_lexicon', 'stopwords']]"
 
-      - name: Execute Lakehouse Pipeline (Bronze -> Silver -> Spark Gold)
+      - name: Execute Lakehouse Pipeline (Bronze -> Silver -> DuckDB Gold)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src
