@@ -1,12 +1,20 @@
 """
 Enrich — Sniffer dek + 3 bullets (free, no paid LLM)
-Uses trafilatura for extraction if needed, sumy LSA for bullets.
-ponytail: 50 lines, deterministic, offline. Upgrade to distilbart when you have 1GB RAM.
+Uses trafilatura for body extraction when fetching; bullets are extractive and offline.
 """
+import logging
 import re
-from typing import Dict, List
+from concurrent.futures import ThreadPoolExecutor
 
-def _split_sentences(text: str) -> List[str]:
+logger = logging.getLogger(__name__)
+
+# Fetches are network-bound and mostly timeouts, so a small pool turns ~11 minutes of
+# serial latency for a 110-article batch into seconds. MAX_FETCH sits above the normal
+# batch size so the cap only bites on a pathological one; those articles use the excerpt.
+MAX_FETCH = 200
+FETCH_WORKERS = 8
+
+def _split_sentences(text: str) -> list[str]:
     # simple sentence split, avoids NLTK heavy
     text = re.sub(r"\s+", " ", text).strip()
     # keep abbreviations minimal
@@ -15,14 +23,14 @@ def _split_sentences(text: str) -> List[str]:
 
 def _normalize_sentence(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
-    s = re.sub(r"(\d+)\s*percent", r"\1%", s, flags=re.I)
+    s = re.sub(r"(\d+)\s*percent", r"\1%", s, flags=re.IGNORECASE)
     s = s.replace(" -- ", " — ").replace(" - ", " — ")
     if s and s[0].islower():
         s = s[0].upper() + s[1:]
     return s
 
 def _toks(s: str):
-    return set(re.findall(r"[a-zA-Z]{4,}", s.lower()))
+    return set(re.findall(r"[a-zA-Z]{3,}", s.lower()))
 
 def _jaccard(a: str, b: str) -> float:
     ta, tb = _toks(a), _toks(b)
@@ -30,43 +38,22 @@ def _jaccard(a: str, b: str) -> float:
         return 1.0 if a[:30] == b[:30] else 0.0
     return len(ta & tb) / len(ta | tb)
 
-def _extractive_bullets(text: str, n: int = 3, exclude: str = "") -> List[str]:
+def _is_dek(s: str, dek: str) -> bool:
+    # exact match first: a short dek can share no tokens with a longer bullet,
+    # so overlap alone lets the dek through as a bullet
+    if not dek:
+        return False
+    return s == dek or _jaccard(s, dek) > 0.55 or s[:30] in dek or dek[:30] in s
+
+def _extractive_bullets(text: str, n: int = 3, exclude: str = "", sents: list[str] | None = None) -> list[str]:
     if not text or len(text.split()) < 30:
         return []
-    # Fast path first: TF-IDF-ish scoring, no heavy deps.
-    # Opt-in to sumy LSA via SNIFFER_USE_SUMY=1 (slower, needs nltk data).
-    import os
-    if os.getenv("SNIFFER_USE_SUMY") == "1":
-        try:
-            from sumy.parsers.plaintext import PlaintextParser
-            from sumy.nlp.tokenizers import Tokenizer
-            from sumy.summarizers.lsa import LsaSummarizer
-            from sumy.nlp.stemmers import Stemmer
-            from sumy.utils import get_stop_words
-
-            parser = PlaintextParser.from_string(text[:20000], Tokenizer("english"))
-            stemmer = Stemmer("english")
-            summ = LsaSummarizer(stemmer)
-            summ.stop_words = get_stop_words("english")
-            sents = summ(parser.document, n)
-            bullets = [str(s).strip() for s in sents if str(s).strip()]
-            out = []
-            for b in bullets:
-                w = b.split()
-                if len(w) > 22:
-                    b = " ".join(w[:18]) + "…"
-                out.append(b)
-            if out:
-                return out[:n]
-        except Exception:
-            pass
-
-    # fallback: TF-IDF-ish simple (sentence with most title words)
-    sents = _split_sentences(text)
+    if sents is None:
+        sents = _split_sentences(text)
     if len(sents) <= n:
         cleaned = [_normalize_sentence(s) for s in sents]
         if exclude:
-            cleaned = [s for s in cleaned if _jaccard(s, exclude) < 0.55]
+            cleaned = [s for s in cleaned if not _is_dek(s, exclude)]
         return cleaned[:n]
     # score by word frequency
     words = re.findall(r"[a-zA-Z]{4,}", text.lower())
@@ -85,7 +72,7 @@ def _extractive_bullets(text: str, n: int = 3, exclude: str = "") -> List[str]:
     seen_openings = set()
     for _, s in scored:
         s = _normalize_sentence(s)
-        if exclude and (_jaccard(s, exclude) > 0.55 or s[:30] in exclude or exclude[:30] in s):
+        if _is_dek(s, exclude):
             continue
         if any(_jaccard(s, o) > 0.55 for o in out):
             continue
@@ -102,10 +89,11 @@ def _extractive_bullets(text: str, n: int = 3, exclude: str = "") -> List[str]:
             break
     return out
 
-def _make_dek(text: str, title: str = "") -> str:
+def _make_dek(text: str, title: str = "", sents: list[str] | None = None) -> str:
     if not text:
         return ""
-    sents = _split_sentences(text)
+    if sents is None:
+        sents = _split_sentences(text)
     if not sents:
         return text[:140]
     # prefer first sentence that is 15-35w and not equal to title
@@ -115,39 +103,60 @@ def _make_dek(text: str, title: str = "") -> str:
             return _normalize_sentence(s)
     return _normalize_sentence(sents[0][:160])
 
-def enrich_article(article: Dict, fetch: bool = False) -> Dict:
-    """Add dek, bullets, read_time to article dict. Mutates copy."""
+def _fetch_body(link: str, excerpt: str) -> str:
+    try:
+        import requests
+        from trafilatura import bare_extraction
+        resp = requests.get(link, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", ""):
+            doc = bare_extraction(resp.text, with_metadata=True, favor_recall=False)
+            if doc and getattr(doc, "text", None) and len(doc.text.split()) > 80:
+                return doc.text
+    except Exception:
+        logger.debug("body fetch failed for %s", link, exc_info=True)
+    return excerpt
+
+def _enrich_body(article: dict, body: str) -> dict:
     title = article.get("title", "") or ""
     excerpt = article.get("excerpt", "") or ""
-    # try to use fetched body if available via trafilatura when fetch=True
-    body = excerpt
-    if fetch and article.get("link"):
-        try:
-            from trafilatura import bare_extraction
-            import requests
-            # quick fetch with timeout, but skip in pipeline default (slow)
-            resp = requests.get(article["link"], timeout=6, headers={"User-Agent": "Mozilla/5.0"})
-            if resp.status_code == 200 and "text/html" in resp.headers.get("content-type",""):
-                doc = bare_extraction(resp.text, with_metadata=True, favor_recall=False)
-                if doc and getattr(doc, "text", None) and len(doc.text.split()) > 80:
-                    body = doc.text
-        except Exception:
-            pass
-
-    dek = _make_dek(body, title)
-    bullets = _extractive_bullets(body, 3, exclude=dek)
-    # ensure bullets not empty -> fallback to excerpt sentences
+    sents = _split_sentences(body)
+    dek = _make_dek(body, title, sents=sents)[:220]
+    bullets = _extractive_bullets(body, 3, exclude=dek, sents=sents)
     if not bullets and excerpt:
-        bullets = _split_sentences(excerpt)[:3]
+        ex = [_normalize_sentence(s) for s in _split_sentences(excerpt)]
+        bullets = [s for s in ex if not _is_dek(s, dek)][:3]
     # read_time from body
     words = len(body.split())
     read_time = max(1, round(words / 225)) if words else article.get("read_time", 3)
 
     out = dict(article)
-    out["dek"] = dek[:220]
+    out["dek"] = dek
     out["bullets"] = bullets[:3]
     out["read_time"] = read_time
     return out
 
-def enrich_batch(articles: List[Dict], fetch: bool = False) -> List[Dict]:
-    return [enrich_article(a, fetch=fetch) for a in articles]
+def enrich_article(article: dict, fetch: bool = False) -> dict:
+    """Add dek, bullets, read_time to article dict. Mutates copy."""
+    body = article.get("excerpt", "") or ""
+    if fetch and article.get("link"):
+        body = _fetch_body(article["link"], body)
+    return _enrich_body(article, body)
+
+def enrich_batch(articles: list[dict], fetch: bool = False) -> list[dict]:
+    if not fetch:
+        return [enrich_article(a, fetch=False) for a in articles]
+    items = list(articles)
+    links = [a.get("link") or "" for a in items]
+    linked = [i for i, link in enumerate(links) if link]
+    todo = linked[:MAX_FETCH]
+    if len(todo) < len(linked):
+        logger.info("fetch capped at %d articles: %d use excerpt only", MAX_FETCH, len(linked) - len(todo))
+    bodies: dict[int, str] = {}
+    if todo:
+        with ThreadPoolExecutor(max_workers=min(FETCH_WORKERS, len(todo))) as pool:
+            fetched = pool.map(lambda i: _fetch_body(links[i], items[i].get("excerpt", "") or ""), todo)
+            bodies.update(zip(todo, fetched))
+    return [
+        _enrich_body(a, bodies[i] if i in bodies else (a.get("excerpt", "") or ""))
+        for i, a in enumerate(items)
+    ]
