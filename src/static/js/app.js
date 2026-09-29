@@ -20,12 +20,16 @@ async function request(url, opts = {}, timeoutMs = 12000) {
   const id = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const r = await fetch(url, {
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...(opts.headers || {}) },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...opts.headers },
       ...opts,
       signal: ctrl.signal,
     });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.message || d.error || 'Something went wrong');
+    if (!r.ok) {
+      const wait = parseFloat(r.headers.get('Retry-After') || d.retry_after);
+      const hint = Number.isFinite(wait) && wait > 0 ? ` (retry in ${Math.ceil(wait)}s)` : '';
+      throw new Error((d.message || d.error || 'Something went wrong') + hint);
+    }
     return d;
   } finally {
     clearTimeout(id);
@@ -82,7 +86,8 @@ async function summarizeArticle(url, titleHint) {
       p.textContent = d.summary;
       frag.append(p);
     }
-    const pts = (d.bullets || []).filter((b) => b && b !== d.dek).slice(0, 3);
+    const [first, second, third] = (d.bullets || []).filter((b) => b && b !== d.dek).slice(0, 3);
+    const pts = [first, second].filter(Boolean);
     if (pts.length) {
       const label = document.createElement('div');
       label.className = 'sn-drawer-label';
@@ -90,20 +95,20 @@ async function summarizeArticle(url, titleHint) {
       frag.append(label);
       const ul = document.createElement('ul');
       ul.className = 'sn-drawer-bullets';
-      pts.slice(0, 2).forEach((b) => {
+      pts.forEach((b) => {
         const li = document.createElement('li');
         li.textContent = b;
         ul.append(li);
       });
       frag.append(ul);
-      if (pts[2]) {
+      if (third) {
         const why = document.createElement('div');
         why.className = 'sn-why';
         const wl = document.createElement('div');
         wl.className = 'sn-drawer-label';
         wl.textContent = 'Why it matters';
         const wp = document.createElement('p');
-        wp.textContent = pts[2];
+        wp.textContent = third;
         why.append(wl, wp);
         frag.append(why);
       }
@@ -122,7 +127,19 @@ function initScrapeSSE() {
   const stage = $('#scrapeStage');
   const fill = $('#scrapeProgressFill');
   const pct = $('#scrapePct');
+  const dismiss = $('#scrapeDismiss');
   if (!form || !overlay) return;
+  // A failed scrape deliberately leaves the overlay up so the user is not
+  // bounced to a feed that never changed. That makes the page unreachable,
+  // so the overlay needs an explicit way out.
+  const closeOverlay = () => {
+    overlay.classList.remove('show');
+    if (dismiss) dismiss.hidden = true;
+  };
+  if (dismiss) dismiss.addEventListener('click', closeOverlay);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay.classList.contains('show') && dismiss && !dismiss.hidden) closeOverlay();
+  });
   let target = 0;
   let raf = 0;
   const paint = () => {
@@ -141,6 +158,7 @@ function initScrapeSSE() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     overlay.classList.add('show');
+    if (dismiss) dismiss.hidden = true;
     if (stage) stage.textContent = 'Connecting to sources...';
     setProgress(0);
     try {
@@ -161,19 +179,24 @@ function initScrapeSSE() {
         buffer = lines.pop() || '';
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
-          try {
-            const evt = JSON.parse(line.slice(6));
-            if (evt.stage && stage) stage.textContent = evt.stage === 'Done' ? `Done — ${evt.total || ''} stories loaded` : evt.stage;
-            if (evt.progress !== undefined) setProgress(evt.progress);
-            if (evt.error) throw new Error(evt.stage || 'Scrape failed');
-          } catch (_) { /* keep streaming */ }
+          let evt;
+          try { evt = JSON.parse(line.slice(6)); } catch (_) { continue; }
+          if (evt.stage && stage) stage.textContent = evt.stage === 'Done' ? `Done — ${evt.total || ''} stories loaded` : evt.stage;
+          if (evt.progress !== undefined) setProgress(evt.progress);
+          if (evt.error) throw new Error(evt.stage || 'Scrape failed');
         }
       }
       setProgress(100);
       setTimeout(() => { window.location.href = '/'; }, 400);
     } catch (err) {
-      if (stage) stage.textContent = `Scrape failed: ${err.message || 'unknown error'}`;
-      setTimeout(() => { window.location.href = '/'; }, 2500);
+      // AbortError is a client-side disconnect, not a server failure; either way the
+      // overlay stays up so the user is not bounced to a feed that never changed.
+      if (stage) {
+        stage.textContent = err && err.name === 'AbortError'
+          ? 'Scrape cancelled — connection closed.'
+          : `Scrape failed: ${(err && err.message) || 'unknown error'}`;
+      }
+      if (dismiss) dismiss.hidden = false;
     }
   });
 }
@@ -217,6 +240,27 @@ function initKeys() {
   });
 }
 
+function initFilterSelects() {
+  const form = $('.sn-filter-row');
+  if (!form) return;
+  form.addEventListener('change', (e) => {
+    if (e.target.name === 'source' || e.target.name === 'sort') form.submit();
+  });
+}
+
+function initImageFallbacks() {
+  const feed = $('#feed');
+  if (!feed) return;
+  const hide = (img) => {
+    const wrap = img.closest('.sn-card-media, .sn-row-thumb');
+    if (wrap) wrap.style.display = 'none';
+  };
+  // 'error' does not bubble, so the feed listens in the capture phase.
+  feed.addEventListener('error', (e) => { if (e.target.tagName === 'IMG') hide(e.target); }, true);
+  // An eager image served from cache can fail before DOMContentLoaded.
+  feed.querySelectorAll('img').forEach((img) => { if (img.complete && !img.naturalWidth) hide(img); });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', async (e) => {
     const closer = e.target.closest('[data-drawer-close]');
@@ -249,4 +293,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initReveal();
   initScrollTop();
   initKeys();
+  initFilterSelects();
+  initImageFallbacks();
 });
