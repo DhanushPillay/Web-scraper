@@ -1,5 +1,4 @@
 # Sniffer — local compose (app + pipeline)
-# ponytail: no K8s needed; compose proves reproducibility for <5 services
 services:
   app:
     build: .
@@ -24,4 +23,3 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     volumes:
       - ./data:/app/data
-      - ./configs:/app/configs
