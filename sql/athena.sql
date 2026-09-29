@@ -1,40 +1,51 @@
 -- ============================================================================
 -- Lakehouse Analytical SQL Suite & DDL
--- Compatible with both DuckDB (Local/CI - ₹0 cost) and AWS Athena (Cloud Lake)
--- Demonstrates partition pruning, window functions, CTEs, and aggregation marts.
+-- Section 1 is the AWS Athena / Glue DDL for the cloud lake described in
+-- infrastructure/main.tf. It is illustrative reference only: it targets Athena
+-- over s3:// and is not executed by the local pipeline, which never touches AWS.
+-- Section 2 runs unchanged on DuckDB and Athena, but the paths below are local
+-- relative paths. Switch them to the s3:// location in Section 1 before running
+-- in Athena; the SQL itself needs no other change.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
 -- SECTION 1: AWS Athena / Glue Data Catalog External Table Definitions
+-- Run these manually in the Athena console or the AWS CLI (aws athena
+-- start-query-execution). Column list mirrors the Silver schema written by
+-- to_silver in src/pipeline/transform.py.
 -- ----------------------------------------------------------------------------
 
--- Silver Layer External Table (Partitioned by day and source)
--- CREATE EXTERNAL TABLE IF NOT EXISTS tech_intelligence.silver_articles (
---     record_hash STRING,
---     title STRING,
---     link STRING,
---     author STRING,
---     score INT,
---     category STRING,
---     sentiment STRING,
---     sentiment_score DOUBLE,
---     read_time INT,
---     time_posted STRING,
---     excerpt STRING,
---     dek STRING
--- )
--- PARTITIONED BY (day STRING, source STRING)
--- STORED AS PARQUET
--- LOCATION 's3://sniffer-lake/silver/'
--- TBLPROPERTIES (
---     'parquet.compression'='SNAPPY',
---     'projection.enabled'='true',
---     'projection.day.type'='date',
---     'projection.day.range'='2026-01-01,NOW',
---     'projection.day.format'='yyyy-MM-dd',
---     'projection.source.type'='enum',
---     'projection.source.values'='Hacker News,TechCrunch,Reddit,The Verge,Ars Technica,GitHub Trending,arXiv'
--- );
+CREATE EXTERNAL TABLE IF NOT EXISTS tech_intelligence.silver_articles (
+    record_hash STRING,
+    title STRING,
+    link STRING,
+    author STRING,
+    score INT,
+    comments STRING,
+    category STRING,
+    sentiment STRING,
+    sentiment_score DOUBLE,
+    read_time INT,
+    time_posted STRING,
+    excerpt STRING,
+    image_url STRING,
+    dek STRING,
+    bullets ARRAY<STRING>,
+    credibility STRING
+)
+PARTITIONED BY (day STRING, source STRING)
+STORED AS PARQUET
+LOCATION 's3://sniffer-lake/silver/'
+TBLPROPERTIES (
+    'parquet.compression'='SNAPPY',
+    'projection.enabled'='true',
+    'projection.day.type'='date',
+    'projection.day.range'='2026-01-01,NOW',
+    'projection.day.format'='yyyy-MM-dd',
+    'projection.source.type'='enum',
+    'projection.source.values'='Hacker News,TechCrunch,Reddit,The Verge,Ars Technica,GitHub Trending,arXiv'
+);
+
 
 -- ----------------------------------------------------------------------------
 -- SECTION 2: Production Analytical Queries (DuckDB / Athena Compatible)
@@ -50,7 +61,7 @@ WITH source_stats AS (
         ROUND(AVG(score), 2) AS avg_engagement,
         ROUND(AVG(sentiment_score), 3) AS avg_sentiment,
         ROUND(AVG(read_time), 1) AS avg_reading_time_mins
-    FROM read_parquet('data/silver/**/*.parquet', hive_partitioning=1)
+    FROM read_parquet('data/silver/**/*.parquet', hive_partitioning=1, union_by_name=true)
     GROUP BY source, category
 )
 SELECT
@@ -74,7 +85,7 @@ SELECT
     ROUND(SUM(CASE WHEN sentiment = 'negative' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS pct_negative,
     ROUND(AVG(sentiment_score), 3) AS net_sentiment_score,
     MAX(score) AS peak_engagement
-FROM read_parquet('data/silver/**/*.parquet', hive_partitioning=1)
+FROM read_parquet('data/silver/**/*.parquet', hive_partitioning=1, union_by_name=true)
 GROUP BY category
 ORDER BY total_volume DESC;
 
@@ -93,7 +104,7 @@ WITH ranked_articles AS (
             PARTITION BY category 
             ORDER BY score DESC, sentiment_score DESC
         ) AS category_rank
-    FROM read_parquet('data/silver/**/*.parquet', hive_partitioning=1)
+    FROM read_parquet('data/silver/**/*.parquet', hive_partitioning=1, union_by_name=true)
 )
 SELECT
     category,
