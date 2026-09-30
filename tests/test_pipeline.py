@@ -569,3 +569,97 @@ def test_zero_scrape_fails_loud(monkeypatch):
     # Retention must still run on a zero-article run: it is the only thing
     # that deletes rows, so exiting before it grew the table without bound.
     assert db.pruned == [2]
+
+
+def test_credibility_csv_loads():
+    """The CSV lives at the repo root, but the module is src/utils/, so a
+    path derived from __file__ missed it and every domain scored the
+    default 50 — silently disabling domain credibility everywhere except
+    the Docker layout that happened to have /app/data/."""
+    from src.utils.credibility import CredibilityScorer
+    scorer = CredibilityScorer()
+    assert len(scorer.domain_scores) > 50, (
+        "credibility CSV not found - the scorer is running on defaults only"
+    )
+    assert scorer.domain_scores["techcrunch.com"]["score"] > 0
+
+
+def test_canonical_link_rejects_non_strings():
+    """A BeautifulSoup Tag reaches canonical_link when a scraper shadows its
+    link variable. Tag.__getattr__ returns None for '.strip', so the old
+    `(link or "").strip()` raised "TypeError: 'NoneType' object is not
+    callable" and aborted the whole scrape."""
+    from bs4 import BeautifulSoup
+    from pipeline.ingest import canonical_link
+    tag = BeautifulSoup('<a href="x">y</a>', "html.parser").find("a")
+    assert canonical_link(tag) == ""
+    assert canonical_link(None) == ""
+    assert canonical_link(12345) == ""
+    assert canonical_link("  https://e.com/a/  ") == "https://e.com/a"
+
+
+def test_hn_html_fallback_link_is_not_a_soup_tag():
+    """Regression: the comment-link loop reused the name `link`, shadowing
+    the article URL, so every HN story parsed through the HTML fallback got a
+    bs4 Tag as its link and the scrape crashed in the dedup pass."""
+    from web_scraper import HackerNewsScraper
+    html = """
+    <table><tr class="athing" id="1">
+      <td><span class="titleline"><a href="https://example.com/story">Story title</a></span></td>
+    </tr><tr>
+      <td class="subtext">
+        <span class="score">42 points</span>
+        <a class="hnuser" href="user?id=x">someuser</a>
+        <span class="age">2 hours ago</span>
+        <a href="item?id=1">17&nbsp;comments</a>
+      </td>
+    </tr></table>
+    """
+    scraper = HackerNewsScraper()
+    articles = scraper._parse_html(html)
+    assert len(articles) == 1
+    assert articles[0]["link"] == "https://example.com/story"
+    assert isinstance(articles[0]["link"], str)
+    assert articles[0]["comments"] == "17"
+
+
+def test_scrapers_report_error_on_empty_result():
+    """A feed that returns 200 with 0 entries (arXiv 429 "Rate exceeded." was
+    parsed as a syntax error, Reddit 403, a dead RSS feed) must not report
+    `ok` — that is how a dead source stayed green in get_health()."""
+    from web_scraper import RssScraper
+
+    _EMPTY_RSS = b'<?xml version="1.0"?><rss version="2.0"><channel/></rss>'
+    _ONE_RSS = (
+        b'<?xml version="1.0"?><rss version="2.0"><channel>'
+        b"<item><title>T</title><link>https://e.com/1</link>"
+        b"<description>s</description></item></channel></rss>"
+    )
+
+    class _Body:
+        def __init__(self, raw):
+            self.content = raw
+
+        def raise_for_status(self):
+            pass
+
+    class _Dead(RssScraper):
+        def __init__(self):
+            super().__init__()
+            self.feed_url = "https://example.invalid/feed"
+            self.source = "Dead"
+            self.tag = "Dead"
+
+    rss = _Dead()
+    rss.session.get = lambda *a, **k: _Body(_EMPTY_RSS)
+    assert rss.scrape() == []
+    assert rss.last_status == "error", "empty RSS feed must not report ok"
+    assert "0 entries" in rss.last_error
+
+    # A 200 with entries still reports ok and clears any stale error.
+    alive = _Dead()
+    alive.last_error = "stale"
+    alive.session.get = lambda *a, **k: _Body(_ONE_RSS)
+    assert len(alive.scrape()) == 1
+    assert alive.last_status == "ok"
+    assert alive.last_error == ""
