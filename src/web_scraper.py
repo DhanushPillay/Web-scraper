@@ -30,9 +30,18 @@ _REDDIT_IMAGE_HOSTS = ("i.redd.it", "preview.redd.it")
 _PLACEHOLDER_TOKENS = ("self", "default", "placeholder", "1x1", "blank.gif", "redditstatic")
 
 
-def _parse_feed(url: str):
-    """Wrapper around feedparser.parse with bozo logging."""
-    feed = feedparser.parse(url)
+def _parse_feed(url: str, session: requests.Session | None = None):
+    """Parse a feed, fetching the bytes ourselves so the session's UA and
+    retry policy apply. feedparser.parse(url) would otherwise use its own
+    urllib UA, no timeout and no retry, and a 429 body ("Rate exceeded.")
+    would reach the parser as a syntax error instead of an HTTP failure.
+    """
+    if session is None:
+        feed = feedparser.parse(url)
+    else:
+        resp = session.get(url, timeout=20)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.content)
     if getattr(feed, 'bozo', False):
         logger.warning(f"Feed {url} bozo: {getattr(feed, 'bozo_exception', '')}")
     return feed
@@ -198,7 +207,7 @@ class HackerNewsScraper(BaseScraper):
         logger.info("[HN] Starting RSS scrape...")
         try:
             # Try RSS first (much faster)
-            feed = _parse_feed(self.feed_url.format(count=self.items_per_page * max(1, num_pages)))
+            feed = _parse_feed(self.feed_url.format(count=self.items_per_page * max(1, num_pages)), self.session)
             if feed.entries:
                 for entry in feed.entries:
                     # hnrss puts points/comments in the description, not in RSS fields
@@ -268,7 +277,12 @@ class HackerNewsScraper(BaseScraper):
                     articles.extend(self._parse_html(response.text))
                 if p < num_pages:
                     time.sleep(1)
-            self.last_status = "ok"
+            if articles:
+                self.last_status = "ok"
+                self.last_error = ""
+            else:
+                self.last_status = "error"
+                self.last_error = f"HTML fallback parsed 0 articles from {self.fallback_url}"
         except requests.RequestException as e:
             self.last_status = "error"
             self.last_error = str(e)
@@ -310,9 +324,9 @@ class HackerNewsScraper(BaseScraper):
                         time_posted = age_elem.text
 
                     links = subtext.find_all('a')
-                    for link in links:
-                        if 'comment' in link.text:
-                            comments = link.text.split()[0]
+                    for comment_link in links:
+                        if 'comment' in comment_link.text:
+                            comments = comment_link.text.split()[0]
                             if comments == 'discuss':
                                 comments = "0"
                             break
@@ -349,7 +363,7 @@ class RssScraper(BaseScraper):
         articles = []
         logger.info(f"[{self.tag}] Starting RSS scrape...")
         try:
-            feed = _parse_feed(self.feed_url)
+            feed = _parse_feed(self.feed_url, self.session)
             for entry in feed.entries[:self.limit]:
                 excerpt = ""
                 if hasattr(entry, 'summary'):
@@ -367,7 +381,12 @@ class RssScraper(BaseScraper):
                     'excerpt': excerpt,
                     'image_url': _extract_feed_image(entry)
                 })
-            self.last_status = "ok"
+            if articles:
+                self.last_status = "ok"
+                self.last_error = ""
+            else:
+                self.last_status = "error"
+                self.last_error = f"Feed returned 0 entries: {self.feed_url}"
         except Exception as e:
             self.last_status = "error"
             self.last_error = str(e)
@@ -471,11 +490,17 @@ class RedditScraper(BaseScraper):
                         'excerpt': excerpt,
                         'image_url': img,
                     })
-                self.last_status = "ok"
-                self.last_error = ""
+                if articles:
+                    self.last_status = "ok"
+                    self.last_error = ""
+                else:
+                    self.last_status = "error"
+                    self.last_error = f"r/technology returned 0 posts: {self.base_url}"
             else:
                 self.last_status = "error"
-                self.last_error = f"HTTP {response.status_code} from {self.base_url}"
+                hint = " (Reddit 403s most datacenter IPs regardless of UA)" \
+                    if response.status_code == 403 else ""
+                self.last_error = f"HTTP {response.status_code} from {self.base_url}{hint}"
                 logger.warning(f"[Reddit] {self.last_error}")
         except requests.RequestException as e:
             self.last_status = "error"
@@ -540,12 +565,16 @@ class GithubTrendingScraper(BaseScraper):
                         "excerpt": excerpt,
                         "image_url": (repo.get("owner") or {}).get("avatar_url", ""),
                     })
-                self.last_status = "ok"
-                self.last_error = ""
                 if len(data.get("items", [])) < 20:
                     break
                 if page < num_pages:
                     time.sleep(1)
+            if articles:
+                self.last_status = "ok"
+                self.last_error = ""
+            elif self.last_status != "error":
+                self.last_status = "error"
+                self.last_error = f"GitHub search returned 0 repos: {self.base_url}"
         except Exception as e:
             self.last_status = "error"
             self.last_error = str(e)
@@ -562,7 +591,12 @@ class ArxivScraper(BaseScraper):
 
     def __init__(self) -> None:
         super().__init__()
-        self.base_url = "http://export.arxiv.org/api/query"
+        self.base_url = "https://export.arxiv.org/api/query"
+        # arXiv asks API callers to identify themselves; the shared browser UA
+        # is not enough and the API is aggressive about rate limiting.
+        self.session.headers.update({
+            "User-Agent": "Sniffer/1.0 (tech news aggregator; +https://github.com/DhanushPillay/Web-scraper)"
+        })
 
     def scrape(self, num_pages: int = 1) -> list[dict]:
         start = time.time()
@@ -581,8 +615,11 @@ class ArxivScraper(BaseScraper):
                 import urllib.parse
                 query = urllib.parse.urlencode(params, safe=":")
                 url = f"{self.base_url}?{query}"
-                feed = _parse_feed(url)
+                feed = _parse_feed(url, self.session)
                 if not feed.entries:
+                    if not articles:
+                        self.last_status = "error"
+                        self.last_error = f"arXiv returned 0 entries: {url}"
                     break
                 for entry in feed.entries:
                     # arXiv authors are in entry.authors
@@ -610,7 +647,9 @@ class ArxivScraper(BaseScraper):
                     break
                 if page < num_pages - 1:
                     time.sleep(1)
-            self.last_status = "ok"
+            if articles:
+                self.last_status = "ok"
+                self.last_error = ""
         except Exception as e:
             self.last_status = "error"
             self.last_error = str(e)
