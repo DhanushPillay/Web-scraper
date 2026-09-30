@@ -53,17 +53,20 @@ class CredibilityScorer:
     def _load_csv(self, csv_path: str | None = None):
         """Load MediaBiasFactCheck CSV into memory."""
         if csv_path is None:
-            # Try multiple locations
-            base = os.path.dirname(os.path.dirname(__file__))
-            candidates = [
-                os.path.join(base, 'data', 'mediabiasfactcheck.csv'),
-                os.path.join(base, 'mediabiasfactcheck.csv'),
-                '/app/data/mediabiasfactcheck.csv',
-            ]
-            for c in candidates:
-                if os.path.exists(c):
-                    csv_path = c
+            # The CSV is committed at the repo root, but this module is imported
+            # as src/utils/credibility.py, so walk up from here until we find it.
+            # Works for a local checkout, the Docker layout (/app/...) and a
+            # packaged install alike.
+            current = os.path.dirname(os.path.abspath(__file__))
+            while True:
+                candidate = os.path.join(current, 'data', 'mediabiasfactcheck.csv')
+                if os.path.exists(candidate):
+                    csv_path = candidate
                     break
+                parent = os.path.dirname(current)
+                if parent == current:
+                    break
+                current = parent
 
         if not csv_path or not os.path.exists(csv_path):
             logger.warning(f"Credibility CSV not found at {csv_path}. Using defaults only.")
