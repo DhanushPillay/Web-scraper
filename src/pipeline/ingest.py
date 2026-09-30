@@ -32,7 +32,12 @@ LOCK_STALE_S = 300
 def canonical_link(link: str) -> str:
     """Canonical URL for dedup: IDNA host, no default port, sorted params, no trackers."""
     from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-    s = (link or "").strip()
+    if not isinstance(link, str):
+        # A scraper can hand us a BeautifulSoup Tag or None. Coercing it would
+        # silently store junk as a URL, and attribute access on a Tag returns
+        # None for names like .strip, which turns into a confusing TypeError.
+        return ""
+    s = link.strip()
     if not s:
         return ""
     try:
